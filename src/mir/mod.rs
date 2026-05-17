@@ -12,6 +12,7 @@ pub mod ast {
     pub enum Operand<'a> {
         Var(VarId),
         Int(i64),
+        Float(f64),
         Bool(bool),
         Ident(&'a str),
     }
@@ -21,6 +22,8 @@ pub mod ast {
         Use(Operand<'a>),
         Binary(BinOp, Operand<'a>, Operand<'a>),
         Unary(UnOp, Operand<'a>),
+        Call(&'a str, Vec<Operand<'a>>),
+        As(Operand<'a>, Type),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +77,7 @@ struct MirBuilderContext<'a> {
     vars: Vec<Type>,
     var_map: HashMap<&'a str, VarId>,
     next_block_id: usize,
+    loop_stack: Vec<(BasicBlockId, BasicBlockId)>, // (continue_target, break_target)
 }
 
 impl<'a> MirBuilderContext<'a> {
@@ -84,6 +88,7 @@ impl<'a> MirBuilderContext<'a> {
             vars: Vec::new(),
             var_map: HashMap::new(),
             next_block_id: 0,
+            loop_stack: Vec::new(),
         }
     }
 
@@ -131,8 +136,6 @@ impl<'a> MirBuilderContext<'a> {
         self.vars.push(ty);
         id
     }
-
-
 }
 
 pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
@@ -175,6 +178,7 @@ fn compile_statement<'a>(ctx: &mut MirBuilderContext<'a>, stmt: crate::sema::Sta
             let val_op = compile_expr(ctx, value);
             let var_id = ctx.declare_var(name, match &val_op {
                 Operand::Int(_) => Type::I64,
+                Operand::Float(_) => Type::F64,
                 Operand::Bool(_) => Type::Bool,
                 Operand::Var(vid) => ctx.vars[vid.0],
                 Operand::Ident(_) => Type::I64,
@@ -245,13 +249,25 @@ fn compile_statement<'a>(ctx: &mut MirBuilderContext<'a>, stmt: crate::sema::Sta
 
             // Compile loop body
             ctx.start_block(body_lbl);
+            ctx.loop_stack.push((cond_lbl, end_lbl));
             compile_block(ctx, body);
+            ctx.loop_stack.pop();
             if ctx.current_block.is_some() {
                 ctx.terminate(Terminator::Goto(cond_lbl));
             }
 
             // Start end block
             ctx.start_block(end_lbl);
+        }
+        crate::sema::Statement::Break => {
+            if let Some((_, end_lbl)) = ctx.loop_stack.last().copied() {
+                ctx.terminate(Terminator::Goto(end_lbl));
+            }
+        }
+        crate::sema::Statement::Continue => {
+            if let Some((cond_lbl, _)) = ctx.loop_stack.last().copied() {
+                ctx.terminate(Terminator::Goto(cond_lbl));
+            }
         }
     }
 }
@@ -266,6 +282,7 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
             }
         }
         crate::sema::ast::ExprKind::Int(val) => Operand::Int(val),
+        crate::sema::ast::ExprKind::Float(val) => Operand::Float(val),
         crate::sema::ast::ExprKind::Bool(val) => Operand::Bool(val),
         crate::sema::ast::ExprKind::Binary { op, lhs, rhs } => {
             let lhs_op = compile_expr(ctx, *lhs);
@@ -283,6 +300,27 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
             ctx.push_statement(Statement::Assign(
                 temp_var,
                 Rvalue::Unary(op, sub_op),
+            ));
+            Operand::Var(temp_var)
+        }
+        crate::sema::ast::ExprKind::Call { name, args } => {
+            let mut arg_ops = Vec::new();
+            for arg in args {
+                arg_ops.push(compile_expr(ctx, arg));
+            }
+            let temp_var = ctx.declare_temp(expr.ty);
+            ctx.push_statement(Statement::Assign(
+                temp_var,
+                Rvalue::Call(name, arg_ops),
+            ));
+            Operand::Var(temp_var)
+        }
+        crate::sema::ast::ExprKind::As { expr: sub_expr, ty } => {
+            let sub_op = compile_expr(ctx, *sub_expr);
+            let temp_var = ctx.declare_temp(expr.ty);
+            ctx.push_statement(Statement::Assign(
+                temp_var,
+                Rvalue::As(sub_op, ty),
             ));
             Operand::Var(temp_var)
         }
