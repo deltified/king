@@ -15,6 +15,7 @@ pub struct Codegen<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     struct_types: std::cell::RefCell<HashMap<String, inkwell::types::StructType<'ctx>>>,
+    string_pool: std::cell::RefCell<HashMap<String, PointerValue<'ctx>>>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -26,6 +27,7 @@ impl<'ctx> Codegen<'ctx> {
             module,
             builder,
             struct_types: std::cell::RefCell::new(HashMap::new()),
+            string_pool: std::cell::RefCell::new(HashMap::new()),
         }
     }
 
@@ -75,6 +77,7 @@ impl<'ctx> Codegen<'ctx> {
             Type::I64 => self.context.i64_type().as_basic_type_enum(),
             Type::F64 => self.context.f64_type().as_basic_type_enum(),
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
+            Type::Char | Type::Str => self.context.i8_type().as_basic_type_enum(),
             Type::Void => panic!("Void type cannot be converted to BasicTypeEnum"),
             Type::Ref { ty, .. } => {
                 let inner = self.get_llvm_type(*ty);
@@ -261,6 +264,16 @@ impl<'ctx> Codegen<'ctx> {
             mir::Operand::Bool(val) => {
                 self.context.bool_type().const_int(if *val { 1 } else { 0 }, false).into()
             }
+            mir::Operand::Str(val) => {
+                let mut pool = self.string_pool.borrow_mut();
+                if let Some(ptr) = pool.get(val) {
+                    (*ptr).into()
+                } else {
+                    let ptr = self.builder.build_global_string_ptr(val, "str_literal").unwrap().as_pointer_value();
+                    pool.insert(val.clone(), ptr);
+                    ptr.into()
+                }
+            }
             mir::Operand::Var(vid) => {
                 let ptr = *var_ptrs.get(vid).unwrap();
                 let ty = self.get_llvm_type(vars[vid.0].clone());
@@ -370,6 +383,7 @@ impl<'ctx> Codegen<'ctx> {
                     mir::Operand::Int(_) => Type::I64,
                     mir::Operand::Float(_) => Type::F64,
                     mir::Operand::Bool(_) => Type::Bool,
+                    mir::Operand::Str(_) => Type::Ref { is_mut: false, ty: Box::new(Type::Str) },
                     mir::Operand::Ident(name) => params.iter().find(|(n, _)| *n == *name).map(|(_, t)| t.clone()).unwrap(),
                 };
                 
