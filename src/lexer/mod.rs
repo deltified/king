@@ -163,8 +163,23 @@ impl<'a> Lexer<'a> {
     }
 
     fn skip_whitespace(&mut self) {
-        while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
-            self.pos += 1;
+        loop {
+            while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
+                self.pos += 1;
+            }
+            
+            // Check for single-line comment
+            if self.pos + 1 < self.bytes.len() && self.bytes[self.pos] == b'/' && self.bytes[self.pos + 1] == b'/' {
+                // Consume '//'
+                self.pos += 2;
+                // Consume until newline or EOF
+                while self.pos < self.bytes.len() && self.bytes[self.pos] != b'\n' {
+                    self.pos += 1;
+                }
+                // Continue loop to skip the newline and any subsequent whitespace/comments
+            } else {
+                break;
+            }
         }
     }
 
