@@ -7,6 +7,7 @@ pub enum Token<'a> {
     Import,
     Pub,
     Extern,
+    Is,
     
     If,
     Else,
@@ -14,6 +15,7 @@ pub enum Token<'a> {
     Bool(bool),
     
     Ident(&'a str),
+    Builtin(&'a str),
     Int(i64),
     Float(f64),
     Str(String),

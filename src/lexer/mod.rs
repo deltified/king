@@ -146,6 +146,17 @@ impl<'a> Lexer<'a> {
                 }
             }
             b'"' => return Some(self.read_string()),
+            b'@' => {
+                self.pos += 1;
+                let start = self.pos;
+                while self.pos < self.bytes.len() 
+                    && (self.bytes[self.pos].is_ascii_alphanumeric() || self.bytes[self.pos] == b'_') 
+                {
+                    self.pos += 1;
+                }
+                let text = &self.input[start..self.pos];
+                Token::Builtin(text)
+            }
             
             // Fast paths for Identifiers and Numbers
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => return Some(self.read_identifier()),
@@ -203,6 +214,7 @@ impl<'a> Lexer<'a> {
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
             "as" => Token::As,
+            "is" => Token::Is,
             "break" => Token::Break,
             "continue" => Token::Continue,
             "struct" => Token::Struct,
