@@ -8,6 +8,20 @@ pub struct StructMeta<'a> {
     pub fields: Vec<(String, Type)>,
 }
 
+pub struct TraitMethodMeta<'a> {
+    pub original_name: &'a str,
+    pub param_types: Vec<Type>,
+    pub ret_type: Type,
+    pub param_names: Vec<String>,
+}
+
+pub struct TraitMeta<'a> {
+    pub original_name: &'a str,
+    pub module_name: String,
+    pub is_pub: bool,
+    pub methods: Vec<TraitMethodMeta<'a>>,
+}
+
 pub struct FunctionMeta<'a> {
     pub original_name: &'a str,
     pub module_name: String,
@@ -17,6 +31,13 @@ pub struct FunctionMeta<'a> {
     pub ret_type: Type,
     pub param_names: Vec<String>,
     pub param_defaults: Vec<Option<crate::hir::Expr<'a>>>,
+}
+
+pub struct ImplMeta<'a> {
+    pub trait_name: String,
+    pub for_type: Type,
+    pub methods: Vec<FunctionMeta<'a>>,
+    pub module_name: String,
 }
 
 pub fn mangle_name(module_name: &str, name: &str, is_extern: bool) -> &'static str {
@@ -41,6 +62,8 @@ pub struct SemaContext<'a> {
     pub imports: HashMap<String, Vec<String>>,
     pub all_structs: Vec<StructMeta<'a>>,
     pub all_functions: Vec<FunctionMeta<'a>>,
+    pub all_traits: Vec<TraitMeta<'a>>,
+    pub all_impls: Vec<ImplMeta<'a>>,
     pub current_module: String,
     pub generic_templates: HashMap<String, crate::hir::Function<'a>>,
     pub monomorphized_functions: Vec<Function<'a>>,
@@ -57,6 +80,8 @@ impl<'a> SemaContext<'a> {
             imports: HashMap::new(),
             all_structs: Vec::new(),
             all_functions: Vec::new(),
+            all_traits: Vec::new(),
+            all_impls: Vec::new(),
             current_module: String::new(),
             generic_templates: HashMap::new(),
             monomorphized_functions: Vec::new(),
@@ -133,14 +158,27 @@ impl<'a> SemaContext<'a> {
                     return Ok(Type::Struct(mangled.to_string()));
                 }
             }
+            if let Some(meta) = self
+                .all_traits
+                .iter()
+                .find(|t| t.original_name == struct_name && t.module_name == mod_name)
+            {
+                if meta.module_name == self.current_module || meta.is_pub {
+                    let mangled = mangle_name(&meta.module_name, struct_name, false);
+                    return Ok(Type::Struct(mangled.to_string()));
+                }
+            }
         }
 
         if let Some(meta) = self.lookup_struct_meta(name) {
             let mangled = mangle_name(&meta.module_name, name, false);
             Ok(Type::Struct(mangled.to_string()))
+        } else if let Some(meta) = self.lookup_trait_meta(name) {
+            let mangled = mangle_name(&meta.module_name, name, false);
+            Ok(Type::Struct(mangled.to_string()))
         } else {
             Err(format!(
-                "Struct '{}' not found or is private in module '{}'",
+                "Struct or Trait '{}' not found or is private in module '{}'",
                 name, self.current_module
             ))
         }
@@ -161,6 +199,28 @@ impl<'a> SemaContext<'a> {
                 .all_structs
                 .iter()
                 .find(|s| s.original_name == name && s.module_name == *imp && s.is_pub)
+            {
+                return Some(meta);
+            }
+        }
+        None
+    }
+
+    pub fn lookup_trait_meta(&self, name: &str) -> Option<&TraitMeta<'a>> {
+        if let Some(meta) = self
+            .all_traits
+            .iter()
+            .find(|t| t.original_name == name && t.module_name == self.current_module)
+        {
+            return Some(meta);
+        }
+        let empty = Vec::new();
+        let imps = self.imports.get(&self.current_module).unwrap_or(&empty);
+        for imp in imps {
+            if let Some(meta) = self
+                .all_traits
+                .iter()
+                .find(|t| t.original_name == name && t.module_name == *imp && t.is_pub)
             {
                 return Some(meta);
             }

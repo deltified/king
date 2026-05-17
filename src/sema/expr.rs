@@ -6,7 +6,7 @@ use super::generics::{
     get_mangled_mono_name, resolve_generic_template, substitute_block, substitute_type,
     substitute_expr, type_to_hir,
 };
-use super::analyze::get_type_id;
+use super::analyze::{get_type_id, get_type_name_slug};
 use super::statement::check_block;
 
 pub fn check_expr<'a>(
@@ -561,10 +561,110 @@ pub fn check_expr<'a>(
             let typed_expr = check_expr(ctx, *expr)?;
             let raw_dest_ty = Type::from(ty);
             let dest_ty = ctx.resolve_type(raw_dest_ty)?;
-            let is_match = typed_expr.ty == dest_ty;
+            let is_match = if let Type::Struct(ref trait_name) = dest_ty {
+                if ctx.lookup_trait_meta(trait_name).is_some() {
+                    let mut base_ty = &typed_expr.ty;
+                    while let Type::Ref { ty, .. } = base_ty {
+                        base_ty = ty;
+                    }
+                    ctx.all_impls.iter().any(|imp| {
+                        let mut imp_base_ty = &imp.for_type;
+                        while let Type::Ref { ty, .. } = imp_base_ty {
+                            imp_base_ty = ty;
+                        }
+                        imp.trait_name == *trait_name && base_ty == imp_base_ty
+                    })
+                } else {
+                    typed_expr.ty == dest_ty
+                }
+            } else {
+                typed_expr.ty == dest_ty
+            };
             Ok(TypedExpr {
                 kind: ExprKind::Bool(is_match),
                 ty: Type::Bool,
+            })
+        }
+        crate::hir::Expr::MethodCall { expr, method, args } => {
+            let typed_expr = check_expr(ctx, *expr)?;
+            let mut resolved_impl_fn = None;
+            for imp in &ctx.all_impls {
+                let mut base_ty = &typed_expr.ty;
+                while let Type::Ref { ty, .. } = base_ty {
+                    base_ty = ty;
+                }
+                let mut imp_base_ty = &imp.for_type;
+                while let Type::Ref { ty, .. } = imp_base_ty {
+                    imp_base_ty = ty;
+                }
+                if base_ty == imp_base_ty {
+                    if let Some(meta) = imp.methods.iter().find(|m| m.original_name == method) {
+                        resolved_impl_fn = Some((imp.trait_name.clone(), meta));
+                        break;
+                    }
+                }
+            }
+
+            let (mangled_fn_name, param_tys, ret_ty) = if let Some((trait_name, _meta)) = resolved_impl_fn {
+                let mut base_ty = &typed_expr.ty;
+                while let Type::Ref { ty, .. } = base_ty {
+                    base_ty = ty;
+                }
+                let mangled = format!("{}__{}__{}", trait_name, method, get_type_name_slug(base_ty));
+                let mangled_ref = Box::leak(mangled.into_boxed_str());
+                let (param_tys, ret_ty) = ctx.functions.get(mangled_ref).ok_ok_or_else(|| {
+                    format!("Trait method implementation function '{}' not found in context", mangled_ref)
+                })?.clone();
+                (mangled_ref, param_tys, ret_ty)
+            } else {
+                return Err(format!("Method '{}' not found for type {:?}", method, typed_expr.ty));
+            };
+
+            let mut all_args = Vec::new();
+            all_args.push(typed_expr);
+            for arg in args {
+                all_args.push(check_expr(ctx, arg.value)?);
+            }
+
+            if all_args.len() != param_tys.len() {
+                return Err(format!(
+                    "Method '{}' expects {} arguments, found {}",
+                    method, param_tys.len(), all_args.len()
+                ));
+            }
+
+            let mut typed_args = Vec::new();
+            for (arg, expected_ty) in all_args.into_iter().zip(param_tys) {
+                let mut arg = arg;
+                if let Type::Ref { is_mut, ty: _ref_inner } = &expected_ty {
+                    if !matches!(arg.ty, Type::Ref { .. }) {
+                        if *is_mut && !is_writable(ctx, &arg) {
+                            return Err(format!("Cannot borrow immutable expression as mutable self receiver"));
+                        }
+                        arg = TypedExpr {
+                            kind: ExprKind::Borrow {
+                                is_mut: *is_mut,
+                                expr: Box::new(arg.clone()),
+                            },
+                            ty: expected_ty.clone(),
+                        };
+                    }
+                }
+                if arg.ty != expected_ty {
+                    return Err(format!(
+                        "Argument type mismatch for method '{}': expected {:?}, found {:?}",
+                        method, expected_ty, arg.ty
+                    ));
+                }
+                typed_args.push(arg);
+            }
+
+            Ok(TypedExpr {
+                kind: ExprKind::Call {
+                    name: mangled_fn_name,
+                    args: typed_args,
+                },
+                ty: ret_ty,
             })
         }
         crate::hir::Expr::BuiltinCall { name, args } => match name {

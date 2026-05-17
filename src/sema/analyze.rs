@@ -1,5 +1,6 @@
 use super::ast::{ExternFunction, Function, Param, Program, StructDef, Type};
-use super::context::{mangle_name, SemaContext, StructMeta, FunctionMeta};
+use super::context::{mangle_name, SemaContext, StructMeta, FunctionMeta, OptionExt};
+use super::generics::{type_to_hir, substitute_type};
 use super::statement::check_block;
 use super::expr::check_expr;
 
@@ -32,7 +33,21 @@ pub fn get_type_id(ty: &Type) -> i64 {
     }
 }
 
-pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, String> {
+pub fn get_type_name_slug(ty: &Type) -> String {
+    match ty {
+        Type::I64 => "i64".to_string(),
+        Type::F64 => "f64".to_string(),
+        Type::Bool => "bool".to_string(),
+        Type::Char => "char".to_string(),
+        Type::Str => "str".to_string(),
+        Type::TypeVal => "type".to_string(),
+        Type::Void => "void".to_string(),
+        Type::Ref { is_mut, ty } => format!("ref_{}_{}", if *is_mut { "mut" } else { "imm" }, get_type_name_slug(ty)),
+        Type::Struct(s) => s.to_string(),
+    }
+}
+
+pub fn analyze<'a>(mut program: crate::hir::Program<'a>) -> Result<Program<'a>, String> {
     let mut ctx = SemaContext::new();
 
     // Register metadata
@@ -52,6 +67,124 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
             fields,
         });
     }
+
+    // Populate raw traits
+    for t in &program.traits {
+        let mut methods = Vec::new();
+        for m in &t.methods {
+            let param_tys: Vec<Type> = m.params.iter().map(|p| Type::from(p.ty.clone())).collect();
+            let param_names: Vec<String> = m.params.iter().map(|p| p.name.to_string()).collect();
+            let ret_ty = Type::from(m.ret_type.clone());
+            methods.push(super::context::TraitMethodMeta {
+                original_name: m.name,
+                param_types: param_tys,
+                ret_type: ret_ty,
+                param_names,
+            });
+        }
+        ctx.all_traits.push(super::context::TraitMeta {
+            original_name: t.name,
+            module_name: t.module_name.clone(),
+            is_pub: t.is_pub,
+            methods,
+        });
+    }
+
+    // Process impls and generate implementations
+    let mut impl_generated_functions = Vec::new();
+    for imp in &program.impls {
+        ctx.current_module = imp.module_name.clone();
+        
+        let trait_meta = ctx.lookup_trait_meta(imp.trait_name).ok_ok_or_else(|| {
+            format!("Trait '{}' not found in module '{}'", imp.trait_name, imp.module_name)
+        })?;
+        let trait_name_mangled = mangle_name(&trait_meta.module_name, trait_meta.original_name, false);
+        
+        let trait_methods_info: Vec<(String, Vec<Type>, Type, Vec<String>)> = trait_meta.methods.iter().map(|m| {
+            (
+                m.original_name.to_string(),
+                m.param_types.clone(),
+                m.ret_type.clone(),
+                m.param_names.clone(),
+            )
+        }).collect();
+        
+        for for_ty in &imp.for_types {
+            let raw_for_ty = Type::from(for_ty.clone());
+            let resolved_concrete_type = ctx.resolve_type(raw_for_ty)?;
+            
+            let mut impl_methods = Vec::new();
+            
+            for m in &imp.methods {
+                let _trait_m = trait_methods_info.iter().find(|tm| tm.0 == m.name).ok_ok_or_else(|| {
+                    format!("Method '{}' is not declared in trait '{}'", m.name, imp.trait_name)
+                })?;
+                
+                let mangled_impl_fn_name = format!("{}__{}__{}", trait_name_mangled, m.name, get_type_name_slug(&resolved_concrete_type));
+                let mangled_impl_fn_name_ref = Box::leak(mangled_impl_fn_name.into_boxed_str());
+                
+                let hir_concrete_ty = type_to_hir(&resolved_concrete_type);
+                let mut mapping = std::collections::HashMap::new();
+                mapping.insert("self", &hir_concrete_ty);
+                for g in &m.generics {
+                    mapping.insert(*g, &hir_concrete_ty);
+                }
+                
+                let substituted_body = super::generics::substitute_block(m.body.clone(), &mapping);
+                let substituted_ret = substitute_type(&m.ret_type, &mapping);
+                
+                let mut substituted_params = Vec::new();
+                for p in &m.params {
+                    let subst_ty = substitute_type(&p.ty, &mapping);
+                    substituted_params.push(crate::hir::Param {
+                        name: p.name,
+                        ty: subst_ty,
+                        contract: p.contract.clone(),
+                        default: p.default.clone(),
+                    });
+                }
+                
+                let new_fn = crate::hir::Function {
+                    name: mangled_impl_fn_name_ref,
+                    generics: Vec::new(),
+                    generic_contracts: Vec::new(),
+                    params: substituted_params,
+                    ret_type: substituted_ret.clone(),
+                    body: substituted_body,
+                    module_name: m.module_name.clone(),
+                    is_pub: true,
+                };
+                impl_generated_functions.push(new_fn);
+                
+                let param_tys: Vec<Type> = m.params.iter().map(|p| {
+                    let subst_ty = substitute_type(&p.ty, &mapping);
+                    Type::from(subst_ty)
+                }).collect();
+                let ret_ty = Type::from(substituted_ret);
+                let param_names = m.params.iter().map(|p| p.name.to_string()).collect();
+                
+                impl_methods.push(FunctionMeta {
+                    original_name: m.name,
+                    module_name: m.module_name.clone(),
+                    is_pub: true,
+                    is_extern: false,
+                    param_types: param_tys,
+                    ret_type: ret_ty,
+                    param_names,
+                    param_defaults: Vec::new(),
+                });
+            }
+            
+            ctx.all_impls.push(super::context::ImplMeta {
+                trait_name: trait_name_mangled.to_string(),
+                for_type: resolved_concrete_type.clone(),
+                methods: impl_methods,
+                module_name: imp.module_name.clone(),
+            });
+        }
+    }
+
+    program.functions.extend(impl_generated_functions);
 
     // First pass: populate raw functions
     let mut normal_functions = Vec::new();
