@@ -1,7 +1,7 @@
 pub mod ast;
 
 use crate::lexer::Token;
-pub use ast::{Program, Statement, Expr, BinOp};
+pub use ast::{Program, Statement, Expr, BinOp, Param};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ParseError<'a> {
@@ -61,6 +61,64 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> Result<Statement<'a>, ParseError<'a>> {
         match self.peek() {
+            Some(Token::Fn) => {
+                self.advance();
+                let name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                self.consume(Token::LParen, "(")?;
+                let mut params = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        let param_name = match self.advance() {
+                            Some(Token::Ident(name)) => name,
+                            found => return Err(ParseError::ExpectedIdentifier { found }),
+                        };
+                        self.consume(Token::Colon, ":")?;
+                        let param_ty = match self.advance() {
+                            Some(Token::Ident(ty)) => ty,
+                            found => return Err(ParseError::ExpectedIdentifier { found }),
+                        };
+                        params.push(Param { name: param_name, ty: param_ty });
+                        if self.peek() == Some(&Token::Comma) {
+                            self.advance();
+                            if self.peek() == Some(&Token::RParen) {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.consume(Token::RParen, ")")?;
+                let ret_type = if self.peek() == Some(&Token::Arrow) {
+                    self.advance();
+                    match self.advance() {
+                        Some(Token::Ident(ty)) => Some(ty),
+                        found => return Err(ParseError::ExpectedIdentifier { found }),
+                    }
+                } else {
+                    None
+                };
+                self.consume(Token::LBrace, "{")?;
+                let mut body = Vec::new();
+                while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                    body.push(self.parse_statement()?);
+                }
+                self.consume(Token::RBrace, "}")?;
+                Ok(Statement::Function { name, params, ret_type, body })
+            }
+            Some(Token::Return) => {
+                self.advance();
+                let value = if self.peek() == Some(&Token::Semi) {
+                    None
+                } else {
+                    Some(self.parse_expr(0)?)
+                };
+                self.consume(Token::Semi, ";")?;
+                Ok(Statement::Return(value))
+            }
             Some(Token::Let) => {
                 self.advance(); // consume 'let'
                 

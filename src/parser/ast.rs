@@ -4,6 +4,12 @@ pub struct Program<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct Param<'a> {
+    pub name: &'a str,
+    pub ty: &'a str,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement<'a> {
     Let {
         name: &'a str,
@@ -14,6 +20,13 @@ pub enum Statement<'a> {
         value: Expr<'a>,
     },
     Expr(Expr<'a>),
+    Function {
+        name: &'a str,
+        params: Vec<Param<'a>>,
+        ret_type: Option<&'a str>,
+        body: Vec<Statement<'a>>,
+    },
+    Return(Option<Expr<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
