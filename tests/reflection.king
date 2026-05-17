@@ -1,0 +1,39 @@
+fn main() -> i64 {
+    let x = 42;
+    let y = 3.14;
+    
+    let mut score = 0;
+    if x is i64 {
+        score = score + 10;
+    }
+    
+    if y is f64 {
+        score = score + 10;
+    }
+    
+    if x is f64 {
+        score = score + 100;
+    }
+    
+    let t1 = @typeof(x);
+    let t2 = @typeof(y);
+    
+    if t1 == @typeof(42) {
+        score = score + 10;
+    }
+    
+    if t2 == @typeof(3.14) {
+        score = score + 10;
+    }
+    
+    if t1 != t2 {
+        score = score + 2;
+    }
+    
+    let t3 = @typeof(x);
+    if t3 is type {
+        score = score + 10;
+    }
+
+    return score;
+}

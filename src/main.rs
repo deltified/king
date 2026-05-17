@@ -75,7 +75,8 @@ fn main() {
     };
     let default_output = format!("{}.ll", input);
     let output = output_path.map(|s| s.as_str()).unwrap_or(&default_output);
-    if compile_file(input, output).is_err() {
+    if let Err(e) = compile_file(input, output) {
+        eprintln!("Compilation failed: {}", e);
         std::process::exit(1);
     }
 }
@@ -118,6 +119,7 @@ mod tests {
             ("tests/struct_mutability.king", 42),
             ("tests/import_success.king", 60),
             ("tests/strings.king", 42),
+            ("tests/reflection.king", 52),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();
