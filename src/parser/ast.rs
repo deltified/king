@@ -16,6 +16,7 @@ pub enum Type<'a> {
 pub struct Param<'a> {
     pub name: &'a str,
     pub ty: Type<'a>,
+    pub contract: Option<Expr<'a>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -51,6 +52,7 @@ pub enum Statement<'a> {
     Function {
         name: &'a str,
         generics: Vec<&'a str>,
+        generic_contracts: Vec<Option<Expr<'a>>>,
         params: Vec<Param<'a>>,
         ret_type: Option<Type<'a>>,
         body: Vec<Statement<'a>>,

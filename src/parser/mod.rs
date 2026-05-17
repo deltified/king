@@ -97,7 +97,31 @@ impl<'a> Parser<'a> {
                 };
                 self.consume(Token::Colon, ":")?;
                 let param_ty = self.parse_type()?;
-                params.push(Param { name: param_name, ty: param_ty });
+                
+                let mut contract = None;
+                if self.peek() == Some(&Token::LBracket) {
+                    self.advance(); // consume '['
+                    let mut contract_tokens = Vec::new();
+                    let mut bracket_depth = 1;
+                    while let Some(tok) = self.peek() {
+                        if tok == &Token::LBracket {
+                            bracket_depth += 1;
+                        } else if tok == &Token::RBracket {
+                            bracket_depth -= 1;
+                            if bracket_depth == 0 {
+                                break;
+                            }
+                        }
+                        contract_tokens.push(self.advance().unwrap());
+                    }
+                    self.consume(Token::RBracket, "]")?;
+                    let preprocessed = preprocess_contract_tokens(&contract_tokens, param_name);
+                    let mut contract_parser = Parser::new(preprocessed);
+                    let contract_expr = contract_parser.parse_expr(0)?;
+                    contract = Some(contract_expr);
+                }
+
+                params.push(Param { name: param_name, ty: param_ty, contract });
                 if self.peek() == Some(&Token::Comma) {
                     self.advance();
                     if self.peek() == Some(&Token::RParen) {
@@ -146,6 +170,7 @@ impl<'a> Parser<'a> {
                     found => return Err(ParseError::ExpectedIdentifier { found }),
                 };
                 let mut generics = Vec::new();
+                let mut generic_contracts = Vec::new();
                 if self.peek() == Some(&Token::LessThan) {
                     self.advance(); // consume '<'
                     while self.peek().is_some() && self.peek() != Some(&Token::GreaterThan) {
@@ -160,7 +185,33 @@ impl<'a> Parser<'a> {
                                 found => return Err(ParseError::UnexpectedToken { expected: "type", found }),
                             }
                         }
+                        
+                        let mut contract = None;
+                        if self.peek() == Some(&Token::LBracket) {
+                            self.advance(); // consume '['
+                            let mut contract_tokens = Vec::new();
+                            let mut bracket_depth = 1;
+                            while let Some(tok) = self.peek() {
+                                if tok == &Token::LBracket {
+                                    bracket_depth += 1;
+                                } else if tok == &Token::RBracket {
+                                    bracket_depth -= 1;
+                                    if bracket_depth == 0 {
+                                        break;
+                                    }
+                                }
+                                contract_tokens.push(self.advance().unwrap());
+                            }
+                            self.consume(Token::RBracket, "]")?;
+                            let preprocessed = preprocess_contract_tokens(&contract_tokens, gen_name);
+                            let mut contract_parser = Parser::new(preprocessed);
+                            let contract_expr = contract_parser.parse_expr(0)?;
+                            contract = Some(contract_expr);
+                        }
+
                         generics.push(gen_name);
+                        generic_contracts.push(contract);
+                        
                         if self.peek() == Some(&Token::Comma) {
                             self.advance();
                         } else {
@@ -182,7 +233,7 @@ impl<'a> Parser<'a> {
                     body.push(self.parse_statement()?);
                 }
                 self.consume(Token::RBrace, "}")?;
-                Ok(Statement::Function { name, generics, params, ret_type, body, is_pub })
+                Ok(Statement::Function { name, generics, generic_contracts, params, ret_type, body, is_pub })
             }
             Some(Token::Comptime) => {
                 self.advance(); // consume 'comptime'
@@ -693,4 +744,44 @@ pub fn parse<'a>(tokens: Vec<Token<'a>>) -> Result<Program<'a>, ParseError<'a>> 
 
 fn is_assign_op(tok: &Token) -> bool {
     matches!(tok, Token::PlusEq | Token::MinusEq | Token::StarEq | Token::SlashEq)
+}
+
+fn is_lhs_missing_eligible(tok: &Token) -> bool {
+    matches!(
+        tok,
+        Token::Plus
+            | Token::Minus
+            | Token::Star
+            | Token::Slash
+            | Token::EqEq
+            | Token::NotEq
+            | Token::LessThan
+            | Token::LessEq
+            | Token::GreaterThan
+            | Token::GreaterEq
+            | Token::Is
+            | Token::As
+    )
+}
+
+fn preprocess_contract_tokens<'a>(tokens: &[Token<'a>], name: &'a str) -> Vec<Token<'a>> {
+    let mut result = Vec::new();
+    for i in 0..tokens.len() {
+        let tok = &tokens[i];
+        let is_missing = is_lhs_missing_eligible(tok) && {
+            if i == 0 {
+                true
+            } else {
+                matches!(
+                    &tokens[i - 1],
+                    Token::AndAnd | Token::OrOr | Token::LParen | Token::Bang
+                )
+            }
+        };
+        if is_missing {
+            result.push(Token::Ident(name));
+        }
+        result.push(tok.clone());
+    }
+    result
 }
