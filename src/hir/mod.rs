@@ -23,6 +23,7 @@ pub mod ast {
         Void,
         Char,
         Str,
+        TypeVal,
         Ref {
             is_mut: bool,
             ty: Box<HirType>,
@@ -130,6 +131,14 @@ pub mod ast {
             expr: Box<Expr<'a>>,
             ty: HirType,
         },
+        Is {
+            expr: Box<Expr<'a>>,
+            ty: HirType,
+        },
+        BuiltinCall {
+            name: &'a str,
+            args: Vec<Expr<'a>>,
+        },
         Borrow {
             is_mut: bool,
             expr: Box<Expr<'a>>,
@@ -211,6 +220,7 @@ fn lower_type(ty: crate::parser::Type) -> HirType {
             "bool" => HirType::Bool,
             "char" => HirType::Char,
             "str" => HirType::Str,
+            "type" => HirType::TypeVal,
             other => HirType::Struct(other.to_string()),
         },
         crate::parser::Type::Ref { is_mut, ty } => HirType::Ref {
@@ -287,6 +297,14 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
         crate::parser::Expr::As { expr, ty } => Expr::As {
             expr: Box::new(build_expr(*expr)),
             ty: lower_type(ty),
+        },
+        crate::parser::Expr::Is { expr, ty } => Expr::Is {
+            expr: Box::new(build_expr(*expr)),
+            ty: lower_type(ty),
+        },
+        crate::parser::Expr::BuiltinCall { name, args } => Expr::BuiltinCall {
+            name,
+            args: args.into_iter().map(build_expr).collect(),
         },
         crate::parser::Expr::Borrow { is_mut, expr } => Expr::Borrow {
             is_mut,
