@@ -54,6 +54,7 @@ pub mod ast {
     #[derive(Debug, Clone, PartialEq)]
     pub struct Function<'a> {
         pub name: &'a str,
+        pub generics: Vec<&'a str>,
         pub params: Vec<Param<'a>>,
         pub ret_type: HirType,
         pub body: Block<'a>,
@@ -105,6 +106,7 @@ pub mod ast {
         },
         Break,
         Continue,
+        Comptime(Block<'a>),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -125,6 +127,7 @@ pub mod ast {
         },
         Call {
             name: &'a str,
+            type_args: Vec<HirType>,
             args: Vec<Expr<'a>>,
         },
         As {
@@ -164,7 +167,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
 
     for stmt in program.statements {
         match stmt {
-            crate::parser::Statement::Function { name, params, ret_type, body, is_pub } => {
+            crate::parser::Statement::Function { name, generics, params, ret_type, body, is_pub } => {
                 let params = params.into_iter().map(|p| Param {
                     name: p.name,
                     ty: lower_type(p.ty),
@@ -173,6 +176,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                 let body = build_block(body);
                 functions.push(Function {
                     name,
+                    generics,
                     params,
                     ret_type,
                     body,
@@ -265,6 +269,7 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
         },
         crate::parser::Statement::Break => Statement::Break,
         crate::parser::Statement::Continue => Statement::Continue,
+        crate::parser::Statement::Comptime(body) => Statement::Comptime(build_block(body)),
         crate::parser::Statement::StructDef { .. }
         | crate::parser::Statement::Function { .. }
         | crate::parser::Statement::ExternFunction { .. }
@@ -290,8 +295,9 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
             op,
             expr: Box::new(build_expr(*expr)),
         },
-        crate::parser::Expr::Call { name, args } => Expr::Call {
+        crate::parser::Expr::Call { name, type_args, args } => Expr::Call {
             name,
+            type_args: type_args.into_iter().map(lower_type).collect(),
             args: args.into_iter().map(build_expr).collect(),
         },
         crate::parser::Expr::As { expr, ty } => Expr::As {
