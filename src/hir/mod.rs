@@ -13,6 +13,7 @@ pub mod ast {
     pub struct Param<'a> {
         pub name: &'a str,
         pub ty: HirType,
+        pub contract: Option<Expr<'a>>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +56,7 @@ pub mod ast {
     pub struct Function<'a> {
         pub name: &'a str,
         pub generics: Vec<&'a str>,
+        pub generic_contracts: Vec<Option<Expr<'a>>>,
         pub params: Vec<Param<'a>>,
         pub ret_type: HirType,
         pub body: Block<'a>,
@@ -167,16 +169,18 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
 
     for stmt in program.statements {
         match stmt {
-            crate::parser::Statement::Function { name, generics, params, ret_type, body, is_pub } => {
+            crate::parser::Statement::Function { name, generics, generic_contracts, params, ret_type, body, is_pub } => {
                 let params = params.into_iter().map(|p| Param {
                     name: p.name,
                     ty: lower_type(p.ty),
+                    contract: p.contract.map(build_expr),
                 }).collect();
                 let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
                 let body = build_block(body);
                 functions.push(Function {
                     name,
                     generics,
+                    generic_contracts: generic_contracts.into_iter().map(|opt| opt.map(build_expr)).collect(),
                     params,
                     ret_type,
                     body,
@@ -188,6 +192,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                 let params = params.into_iter().map(|p| Param {
                     name: p.name,
                     ty: lower_type(p.ty),
+                    contract: p.contract.map(build_expr),
                 }).collect();
                 let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
                 extern_functions.push(ExternFunction {
