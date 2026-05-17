@@ -85,20 +85,60 @@ impl<'a> Parser<'a> {
         let mut params = Vec::new();
         if self.peek() != Some(&Token::RParen) {
             loop {
-                let _is_param_mut = if self.peek() == Some(&Token::Mut) {
+                let mut is_receiver = false;
+                let mut is_amp = false;
+                let mut is_mut = false;
+
+                if self.peek() == Some(&Token::Ampersand) {
+                    is_receiver = true;
+                    is_amp = true;
                     self.advance();
-                    true
+                    if self.peek() == Some(&Token::Mut) {
+                        is_mut = true;
+                        self.advance();
+                    }
+                    self.consume(Token::Ident("self"), "self")?;
+                } else if self.peek() == Some(&Token::Ident("self")) {
+                    is_receiver = true;
+                    self.advance();
+                }
+
+                let (param_name, param_ty) = if is_receiver {
+                    let name = "self";
+                    let ty = if self.peek() == Some(&Token::Colon) {
+                        self.advance(); // consume ':'
+                        let parsed_ty = self.parse_type()?;
+                        if is_amp {
+                            Type::Ref { is_mut, ty: Box::new(parsed_ty) }
+                        } else {
+                            parsed_ty
+                        }
+                    } else {
+                        let placeholder = Type::Ident("self");
+                        if is_amp {
+                            Type::Ref { is_mut, ty: Box::new(placeholder) }
+                        } else {
+                            placeholder
+                        }
+                    };
+                    (name, ty)
                 } else {
-                    false
+                    let _is_param_mut = if self.peek() == Some(&Token::Mut) {
+                        self.advance();
+                        true
+                    } else {
+                        false
+                    };
+                    let param_name = match self.advance() {
+                        Some(Token::Ident(name)) => name,
+                        Some(Token::Others) => "others",
+                        found => return Err(ParseError::ExpectedIdentifier { found }),
+                    };
+                    self.consume(Token::Colon, ":")?;
+                    let param_ty = self.parse_type()?;
+                    (param_name, param_ty)
                 };
-                let param_name = match self.advance() {
-                    Some(Token::Ident(name)) => name,
-                    Some(Token::Others) => "others",
-                    found => return Err(ParseError::ExpectedIdentifier { found }),
-                };
-                self.consume(Token::Colon, ":")?;
-                let param_ty = self.parse_type()?;
-                
+
                 let mut contract = None;
                 if self.peek() == Some(&Token::LBracket) {
                     self.advance(); // consume '['
@@ -161,9 +201,9 @@ impl<'a> Parser<'a> {
 
         if is_pub {
             match self.peek() {
-                Some(Token::Fn) | Some(Token::Struct) | Some(Token::Extern) => {}
+                Some(Token::Fn) | Some(Token::Struct) | Some(Token::Extern) | Some(Token::Trait) => {}
                 found => return Err(ParseError::UnexpectedToken {
-                    expected: "fn, struct or extern after pub",
+                    expected: "fn, struct, extern or trait after pub",
                     found: found.cloned(),
                 }),
             }
@@ -405,6 +445,66 @@ impl<'a> Parser<'a> {
                 }
                 self.consume(Token::RBrace, "}")?;
                 Ok(Statement::StructDef { name, fields, is_pub })
+            }
+            Some(Token::Trait) => {
+                self.advance(); // consume 'trait'
+                let name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                self.consume(Token::LBrace, "{")?;
+                let mut methods = Vec::new();
+                while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                    self.consume(Token::Fn, "fn")?;
+                    let method_name = match self.advance() {
+                        Some(Token::Ident(n)) => n,
+                        found => return Err(ParseError::ExpectedIdentifier { found }),
+                    };
+                    let params = self.parse_fn_params()?;
+                    let ret_type = if self.peek() == Some(&Token::Arrow) {
+                        self.advance();
+                        Some(self.parse_type()?)
+                    } else {
+                        None
+                    };
+                    self.consume(Token::Semi, ";")?;
+                    methods.push(ast::TraitMethod { name: method_name, params, ret_type });
+                }
+                self.consume(Token::RBrace, "}")?;
+                Ok(Statement::TraitDef { name, methods, is_pub })
+            }
+            Some(Token::Impl) => {
+                self.advance(); // consume 'impl'
+                let trait_name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                self.consume(Token::For, "for")?;
+                let mut for_types = Vec::new();
+                loop {
+                    for_types.push(self.parse_type()?);
+                    if self.peek() == Some(&Token::Comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                self.consume(Token::LBrace, "{")?;
+                let mut methods = Vec::new();
+                while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                    let method = self.parse_statement()?;
+                    match &method {
+                        Statement::Function { .. } => {
+                            methods.push(method);
+                        }
+                        _ => return Err(ParseError::UnexpectedToken {
+                            expected: "method definition inside impl",
+                            found: self.peek().cloned(),
+                        }),
+                    }
+                }
+                self.consume(Token::RBrace, "}")?;
+                Ok(Statement::ImplDef { trait_name, for_types, methods })
             }
             Some(Token::Import) => {
                 self.advance(); // consume 'import'
@@ -748,10 +848,41 @@ impl<'a> Parser<'a> {
                         Some(Token::Ident(field)) => field,
                         found => return Err(ParseError::ExpectedIdentifier { found }),
                     };
-                    expr = Expr::FieldAccess {
-                        expr: Box::new(expr),
-                        field,
-                    };
+                    if self.peek() == Some(&Token::LParen) {
+                        self.advance(); // consume '('
+                        let mut args = Vec::new();
+                        if self.peek() != Some(&Token::RParen) {
+                            loop {
+                                let arg_expr = self.parse_expr(0)?;
+                                let mut arg_name = None;
+                                let mut arg_val = arg_expr;
+                                if let Expr::Ident(id_name) = &arg_val {
+                                    if self.peek() == Some(&Token::Colon) {
+                                        self.advance(); // consume ':'
+                                        arg_name = Some(*id_name);
+                                        arg_val = self.parse_expr(0)?;
+                                    }
+                                }
+                                args.push(ast::CallArg { name: arg_name, value: arg_val });
+                                if self.peek() == Some(&Token::Comma) {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        self.consume(Token::RParen, ")")?;
+                        expr = Expr::MethodCall {
+                            expr: Box::new(expr),
+                            method: field,
+                            args,
+                        };
+                    } else {
+                        expr = Expr::FieldAccess {
+                            expr: Box::new(expr),
+                            field,
+                        };
+                    }
                 }
                 Token::LBracket => {
                     self.advance(); // consume '['

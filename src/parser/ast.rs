@@ -21,6 +21,13 @@ pub struct Param<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct TraitMethod<'a> {
+    pub name: &'a str,
+    pub params: Vec<Param<'a>>,
+    pub ret_type: Option<Type<'a>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct CallArg<'a> {
     pub name: Option<&'a str>,
     pub value: Expr<'a>,
@@ -76,6 +83,16 @@ pub enum Statement<'a> {
         fields: Vec<FieldDef<'a>>,
         is_pub: bool,
     },
+    TraitDef {
+        name: &'a str,
+        methods: Vec<TraitMethod<'a>>,
+        is_pub: bool,
+    },
+    ImplDef {
+        trait_name: &'a str,
+        for_types: Vec<Type<'a>>,
+        methods: Vec<Statement<'a>>,
+    },
     Import(Vec<&'a str>),
     Return(Option<Expr<'a>>),
     If {
@@ -117,6 +134,11 @@ pub enum Expr<'a> {
     Call {
         name: &'a str,
         type_args: Vec<Type<'a>>,
+        args: Vec<CallArg<'a>>,
+    },
+    MethodCall {
+        expr: Box<Expr<'a>>,
+        method: &'a str,
         args: Vec<CallArg<'a>>,
     },
     As {
