@@ -1,5 +1,6 @@
 mod lexer;
 mod parser;
+mod hir;
 
 use lexer::Lexer;
 use lexer::Token;
