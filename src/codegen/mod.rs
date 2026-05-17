@@ -1,7 +1,7 @@
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::builder::Builder;
-use inkwell::values::{PointerValue, BasicValueEnum};
+use inkwell::values::{PointerValue, BasicValueEnum, BasicValue};
 use inkwell::types::{BasicTypeEnum, BasicType};
 use inkwell::IntPredicate;
 use inkwell::FloatPredicate;
@@ -14,16 +14,37 @@ pub struct Codegen<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
+    struct_types: std::cell::RefCell<HashMap<String, inkwell::types::StructType<'ctx>>>,
 }
 
 impl<'ctx> Codegen<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
-        Self { context, module, builder }
+        Self {
+            context,
+            module,
+            builder,
+            struct_types: std::cell::RefCell::new(HashMap::new()),
+        }
     }
 
     pub fn compile_program(self, program: mir::Program<'ctx>) -> Module<'ctx> {
+        // Pre-create all struct types as opaque struct types first
+        for s in &program.structs {
+            let struct_ty = self.context.opaque_struct_type(s.name);
+            self.struct_types.borrow_mut().insert(s.name.to_string(), struct_ty);
+        }
+
+        // Set the body for all struct types
+        for s in &program.structs {
+            let struct_ty = *self.struct_types.borrow().get(s.name).unwrap();
+            let field_types: Vec<BasicTypeEnum<'ctx>> = s.fields.iter()
+                .map(|p| self.get_llvm_type(p.ty.clone()))
+                .collect();
+            struct_ty.set_body(&field_types, false);
+        }
+
         // Pre-register all function signatures first to support mutual/forward calls
         for f in &program.functions {
             let param_types: Vec<BasicTypeEnum<'ctx>> = f.params.iter()
@@ -58,6 +79,12 @@ impl<'ctx> Codegen<'ctx> {
             Type::Ref { ty, .. } => {
                 let inner = self.get_llvm_type(*ty);
                 inner.ptr_type(inkwell::AddressSpace::default()).as_basic_type_enum()
+            }
+            Type::Struct(name) => {
+                let struct_types = self.struct_types.borrow();
+                let struct_ty = struct_types.get(&name)
+                    .unwrap_or_else(|| panic!("Struct '{}' not registered in LLVM", name));
+                struct_ty.as_basic_type_enum()
             }
         }
     }
@@ -142,6 +169,50 @@ impl<'ctx> Codegen<'ctx> {
                             compiled_args.push(val.into());
                         }
                         self.builder.build_call(fn_val, &compiled_args, "call_void_tmp").unwrap();
+                    }
+                    mir::Statement::AssignField(var_id, field_index, operand) => {
+                        let var_ptr = *var_ptrs.get(&var_id).unwrap();
+                        let struct_ty = self.get_llvm_type(f.vars[var_id.0].clone()).into_struct_type();
+                        let field_ptr = self.builder.build_struct_gep(struct_ty, var_ptr, field_index as u32, "field_ptr").unwrap();
+                        let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                        self.builder.build_store(field_ptr, val).unwrap();
+                    }
+                    mir::Statement::AssignFieldVar(name, field_index, operand) => {
+                        let var_ptr = *param_ptrs.get(name).unwrap();
+                        let param_ty = f.params.iter().find(|(n, _)| *n == name).map(|(_, t)| t.clone()).unwrap();
+                        let struct_ty = self.get_llvm_type(param_ty).into_struct_type();
+                        let field_ptr = self.builder.build_struct_gep(struct_ty, var_ptr, field_index as u32, "field_ptr").unwrap();
+                        let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                        self.builder.build_store(field_ptr, val).unwrap();
+                    }
+                    mir::Statement::StoreField(var_id, field_index, operand) => {
+                        let stack_ptr = *var_ptrs.get(&var_id).unwrap();
+                        let ptr_val_ty = self.get_llvm_type(f.vars[var_id.0].clone());
+                        let struct_ptr = self.builder.build_load(ptr_val_ty, stack_ptr, "load_struct_ptr").unwrap().into_pointer_value();
+                        
+                        let ref_ty = match f.vars[var_id.0].clone() {
+                            Type::Ref { ty, .. } => *ty,
+                            _ => unreachable!(),
+                        };
+                        let struct_ty = self.get_llvm_type(ref_ty).into_struct_type();
+                        let field_ptr = self.builder.build_struct_gep(struct_ty, struct_ptr, field_index as u32, "field_ptr").unwrap();
+                        let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                        self.builder.build_store(field_ptr, val).unwrap();
+                    }
+                    mir::Statement::StoreFieldVar(name, field_index, operand) => {
+                        let stack_ptr = *param_ptrs.get(name).unwrap();
+                        let param_ty = f.params.iter().find(|(n, _)| *n == name).map(|(_, t)| t.clone()).unwrap();
+                        let ptr_val_ty = self.get_llvm_type(param_ty.clone());
+                        let struct_ptr = self.builder.build_load(ptr_val_ty, stack_ptr, "load_struct_ptr_var").unwrap().into_pointer_value();
+                        
+                        let ref_ty = match param_ty {
+                            Type::Ref { ty, .. } => *ty,
+                            _ => unreachable!(),
+                        };
+                        let struct_ty = self.get_llvm_type(ref_ty).into_struct_type();
+                        let field_ptr = self.builder.build_struct_gep(struct_ty, struct_ptr, field_index as u32, "field_ptr").unwrap();
+                        let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                        self.builder.build_store(field_ptr, val).unwrap();
                     }
                 }
             }
@@ -271,7 +342,7 @@ impl<'ctx> Codegen<'ctx> {
                         BinOp::Lt => self.builder.build_int_compare(IntPredicate::SLT, l, r, "lt_tmp").unwrap().into(),
                         BinOp::Le => self.builder.build_int_compare(IntPredicate::SLE, l, r, "le_tmp").unwrap().into(),
                         BinOp::Gt => self.builder.build_int_compare(IntPredicate::SGT, l, r, "gt_tmp").unwrap().into(),
-                        BinOp::Ge => self.builder.build_int_compare(IntPredicate::SGE, l, r, "ge_tmp").unwrap().into(),
+                        BinOp::Ge => self.builder.build_int_compare(IntPredicate::SGE, l, r, "fge_tmp").unwrap().into(),
                         
                         BinOp::And => self.builder.build_and(l, r, "and_tmp").unwrap().into(),
                         BinOp::Or => self.builder.build_or(l, r, "or_tmp").unwrap().into(),
@@ -324,6 +395,91 @@ impl<'ctx> Codegen<'ctx> {
                 let ptr_val = self.compile_operand(op, var_ptrs, param_ptrs, vars, params).into_pointer_value();
                 let llvm_dest_ty = self.get_llvm_type(dest_ty);
                 self.builder.build_load(llvm_dest_ty, ptr_val, "deref_val").unwrap()
+            }
+            mir::Rvalue::StructLiteral(ops) => {
+                let struct_ty = self.get_llvm_type(dest_ty.clone()).into_struct_type();
+                let temp_alloca = self.builder.build_alloca(struct_ty, "struct_literal_alloca").unwrap();
+                for (i, op) in ops.iter().enumerate() {
+                    let field_ptr = self.builder.build_struct_gep(struct_ty, temp_alloca, i as u32, &format!("field_{}", i)).unwrap();
+                    let val = self.compile_operand(op, var_ptrs, param_ptrs, vars, params);
+                    self.builder.build_store(field_ptr, val).unwrap();
+                }
+                self.builder.build_load(struct_ty, temp_alloca, "loaded_struct").unwrap()
+            }
+            mir::Rvalue::FieldAccess(op, field_index) => {
+                let (struct_ptr, struct_ty) = match op {
+                    mir::Operand::Var(vid) => {
+                        let ptr = *var_ptrs.get(vid).unwrap();
+                        match vars[vid.0].clone() {
+                            Type::Ref { ty, .. } => {
+                                let ptr_val_ty = self.get_llvm_type(vars[vid.0].clone());
+                                let struct_ptr = self.builder.build_load(ptr_val_ty, ptr, "load_struct_ptr").unwrap().into_pointer_value();
+                                let struct_ty = self.get_llvm_type(*ty.clone()).into_struct_type();
+                                (struct_ptr, struct_ty)
+                            }
+                            _ => {
+                                let struct_ty = self.get_llvm_type(vars[vid.0].clone()).into_struct_type();
+                                (ptr, struct_ty)
+                            }
+                        }
+                    }
+                    mir::Operand::Ident(name) => {
+                        let ptr = *param_ptrs.get(name).unwrap();
+                        let param_ty = params.iter().find(|(n, _)| *n == *name).map(|(_, t)| t.clone()).unwrap();
+                        match param_ty {
+                            Type::Ref { ref ty, .. } => {
+                                let ptr_val_ty = self.get_llvm_type(param_ty.clone());
+                                let struct_ptr = self.builder.build_load(ptr_val_ty, ptr, "load_struct_ptr").unwrap().into_pointer_value();
+                                let struct_ty = self.get_llvm_type(*ty.clone()).into_struct_type();
+                                (struct_ptr, struct_ty)
+                            }
+                            _ => {
+                                let struct_ty = self.get_llvm_type(param_ty).into_struct_type();
+                                (ptr, struct_ty)
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                let field_ptr = self.builder.build_struct_gep(struct_ty, struct_ptr, *field_index as u32, "field_ptr").unwrap();
+                let field_llvm_ty = self.get_llvm_type(dest_ty.clone());
+                self.builder.build_load(field_llvm_ty, field_ptr, "loaded_field").unwrap()
+            }
+            mir::Rvalue::RefField(_is_mut, vid, field_index) => {
+                let (struct_ptr, struct_ty) = match vars[vid.0].clone() {
+                    Type::Ref { ty, .. } => {
+                        let ptr = *var_ptrs.get(vid).unwrap();
+                        let ptr_val_ty = self.get_llvm_type(vars[vid.0].clone());
+                        let struct_ptr = self.builder.build_load(ptr_val_ty, ptr, "load_struct_ptr").unwrap().into_pointer_value();
+                        let struct_ty = self.get_llvm_type(*ty.clone()).into_struct_type();
+                        (struct_ptr, struct_ty)
+                    }
+                    _ => {
+                        let ptr = *var_ptrs.get(vid).unwrap();
+                        let struct_ty = self.get_llvm_type(vars[vid.0].clone()).into_struct_type();
+                        (ptr, struct_ty)
+                    }
+                };
+                let field_ptr = self.builder.build_struct_gep(struct_ty, struct_ptr, *field_index as u32, "field_ptr").unwrap();
+                field_ptr.as_basic_value_enum()
+            }
+            mir::Rvalue::RefFieldVar(_is_mut, name, field_index) => {
+                let ptr = *param_ptrs.get(name).unwrap();
+                let param_ty = params.iter().find(|(n, _)| *n == *name).map(|(_, t)| t.clone()).unwrap();
+                let (struct_ptr, struct_ty) = match param_ty {
+                    Type::Ref { ref ty, .. } => {
+                        let ptr_val_ty = self.get_llvm_type(param_ty.clone());
+                        let struct_ptr = self.builder.build_load(ptr_val_ty, ptr, "load_struct_ptr").unwrap().into_pointer_value();
+                        let struct_ty = self.get_llvm_type(*ty.clone()).into_struct_type();
+                        (struct_ptr, struct_ty)
+                    }
+                    _ => {
+                        let struct_ty = self.get_llvm_type(param_ty).into_struct_type();
+                        (ptr, struct_ty)
+                    }
+                };
+                let field_ptr = self.builder.build_struct_gep(struct_ty, struct_ptr, *field_index as u32, "field_ptr").unwrap();
+                field_ptr.as_basic_value_enum()
             }
         }
     }
