@@ -36,12 +36,29 @@ impl<'a> Lexer<'a> {
         let token = match b {
             b'=' => { self.pos += 1; Token::Assign }
             b'+' => { self.pos += 1; Token::Plus }
-            b'-' => { self.pos += 1; Token::Minus }
+            b'-' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'>' {
+                    self.pos += 2;
+                    Token::Arrow
+                } else {
+                    self.pos += 1;
+                    Token::Minus
+                }
+            }
             b'*' => { self.pos += 1; Token::Star }
             b'/' => { self.pos += 1; Token::Slash }
             b'(' => { self.pos += 1; Token::LParen }
             b')' => { self.pos += 1; Token::RParen }
             b';' => { self.pos += 1; Token::Semi }
+            b':' => { self.pos += 1; Token::Colon }
+            b',' => { self.pos += 1; Token::Comma }
+            b'{' => { self.pos += 1; Token::LBrace }
+            b'}' => { self.pos += 1; Token::RBrace }
+            b'[' => { self.pos += 1; Token::LBracket }
+            b']' => { self.pos += 1; Token::RBracket }
+            b'<' => { self.pos += 1; Token::LessThan }
+            b'>' => { self.pos += 1; Token::GreaterThan }
+            b'&' => { self.pos += 1; Token::Ampersand }
             
             // Fast paths for Identifiers and Numbers
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => return Some(self.read_identifier()),
@@ -75,6 +92,9 @@ impl<'a> Lexer<'a> {
         let text = &self.input[start..self.pos];
         match text {
             "let" => Token::Let,
+            "fn" => Token::Fn,
+            "return" => Token::Return,
+            "mut" => Token::Mut,
             _ => Token::Ident(text),
         }
     }

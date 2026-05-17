@@ -11,29 +11,61 @@ fn main() {
 
 
 fn test_lexing() {
-    let input = "let result = (42 + 8) * result_v2 / 2;";
-    let lexer = Lexer::new(input);
+    let fn_input = "fn add(x: i64, mut y: i64) -> i64 { return x + y; }";
+    let lexer = Lexer::new(fn_input);
     let tokens = lexer.tokenize();
-
     assert_eq!(
         tokens,
         vec![
-            Token::Let,
-            Token::Ident("result"),
-            Token::Assign,
+            Token::Fn,
+            Token::Ident("add"),
             Token::LParen,
-            Token::Int(42),
-            Token::Plus,
-            Token::Int(8),
+            Token::Ident("x"),
+            Token::Colon,
+            Token::Ident("i64"),
+            Token::Comma,
+            Token::Mut,
+            Token::Ident("y"),
+            Token::Colon,
+            Token::Ident("i64"),
             Token::RParen,
-            Token::Star,
-            Token::Ident("result_v2"),
-            Token::Slash,
-            Token::Int(2),
+            Token::Arrow,
+            Token::Ident("i64"),
+            Token::LBrace,
+            Token::Return,
+            Token::Ident("x"),
+            Token::Plus,
+            Token::Ident("y"),
             Token::Semi,
+            Token::RBrace,
         ]
     );
     println!("lexer passed test!");
+
+    let fn_generic = "fn run<T>(a: T [T]) {}";
+    let lexer = Lexer::new(fn_generic);
+    let tokens = lexer.tokenize();
+    assert_eq!(
+        tokens,
+        vec![
+            Token::Fn,
+            Token::Ident("run"),
+            Token::LessThan,
+            Token::Ident("T"),
+            Token::GreaterThan,
+            Token::LParen,
+            Token::Ident("a"),
+            Token::Colon,
+            Token::Ident("T"),
+            Token::LBracket,
+            Token::Ident("T"),
+            Token::RBracket,
+            Token::RParen,
+            Token::LBrace,
+            Token::RBrace,
+        ]
+    );
+    println!("lexer passed generic/contract function test!");
 }
 
 fn test_parsing() {
