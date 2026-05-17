@@ -175,12 +175,13 @@ pub struct FunctionMeta<'a> {
     pub is_pub: bool,
     pub param_types: Vec<Type>,
     pub ret_type: Type,
-    pub is_extern: bool,
 }
 
 pub fn mangle_name(module_name: &str, name: &str) -> &'static str {
-    if name == "main" || name == "puts" {
-        if name == "main" { "main" } else { "puts" }
+    if module_name == "extern" || name == "main" || name == "puts" {
+        if name == "main" { "main" }
+        else if name == "puts" { "puts" }
+        else { Box::leak(name.to_string().into_boxed_str()) }
     } else {
         let mangled = format!("{}__{}", module_name.replace("::", "_"), name);
         Box::leak(mangled.into_boxed_str())
@@ -201,7 +202,7 @@ pub struct SemaContext<'a> {
 
 impl<'a> SemaContext<'a> {
     pub fn new() -> Self {
-        let mut ctx = Self {
+        Self {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             structs: HashMap::new(),
@@ -211,17 +212,7 @@ impl<'a> SemaContext<'a> {
             all_structs: Vec::new(),
             all_functions: Vec::new(),
             current_module: String::new(),
-        };
-        ctx.functions.insert("puts", (vec![Type::Ref { is_mut: false, ty: Box::new(Type::Str) }], Type::I64));
-        ctx.all_functions.push(FunctionMeta {
-            original_name: "puts",
-            module_name: "main".to_string(),
-            is_pub: true,
-            param_types: vec![Type::Ref { is_mut: false, ty: Box::new(Type::Str) }],
-            ret_type: Type::I64,
-            is_extern: true,
-        });
-        ctx
+        }
     }
 
     pub fn push_scope(&mut self) {
@@ -294,11 +285,6 @@ impl<'a> SemaContext<'a> {
     }
 
     pub fn resolve_function(&self, name: &str) -> Result<&FunctionMeta<'a>, String> {
-        if name == "puts" {
-            if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == "puts") {
-                return Ok(meta);
-            }
-        }
         if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == name && f.module_name == self.current_module) {
             return Ok(meta);
         }
@@ -308,6 +294,9 @@ impl<'a> SemaContext<'a> {
             if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == name && f.module_name == *imp && f.is_pub) {
                 return Ok(meta);
             }
+        }
+        if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == name && f.module_name == "extern") {
+            return Ok(meta);
         }
         Err(format!("Function '{}' not found or is private in module '{}'", name, self.current_module))
     }
@@ -344,7 +333,6 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
             is_pub: f.is_pub,
             param_types: param_tys,
             ret_type: ret_ty,
-            is_extern: false,
         });
     }
 
@@ -357,7 +345,6 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
             is_pub: true,
             param_types: param_tys,
             ret_type: ret_ty,
-            is_extern: true,
         });
     }
 
@@ -396,12 +383,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
     
     // Update all_functions with resolved signature types, and populate ctx.functions by their mangled names!
     for (mod_name, orig_name, params, ret) in resolved_functions {
-        let is_extern = ctx.all_functions.iter().find(|f| f.original_name == orig_name && f.module_name == mod_name).map(|f| f.is_extern).unwrap_or(false);
-        let mangled = if is_extern {
-            Box::leak(orig_name.to_string().into_boxed_str())
-        } else {
-            mangle_name(&mod_name, &orig_name)
-        };
+        let mangled = mangle_name(&mod_name, &orig_name);
         ctx.functions.insert(mangled, (params.clone(), ret.clone()));
         if let Some(meta) = ctx.all_functions.iter_mut().find(|f| f.original_name == orig_name && f.module_name == mod_name) {
             meta.param_types = params;

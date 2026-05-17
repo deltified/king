@@ -1,0 +1,18 @@
+extern fn abs(x: i64) -> i64;
+extern fn strlen(s: &str) -> i64;
+
+fn main() -> i64 {
+    let x = -42;
+    let y = abs(x);
+    if y != 42 {
+        return 1;
+    }
+
+    let s = "Hello, King!";
+    let len = strlen(s);
+    if len != 12 {
+        return 2;
+    }
+
+    return 0;
+}
