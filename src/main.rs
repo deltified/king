@@ -132,6 +132,7 @@ mod tests {
             ("tests/contract_runtime_fail.king", 101),
             ("tests/named_default_args.king", 42),
             ("tests/variadics.king", 42),
+            ("tests/traits.king", 40),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();

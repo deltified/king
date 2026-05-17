@@ -120,8 +120,8 @@ pub fn analyze<'a>(mut program: crate::hir::Program<'a>) -> Result<Program<'a>, 
                     format!("Method '{}' is not declared in trait '{}'", m.name, imp.trait_name)
                 })?;
                 
-                let mangled_impl_fn_name = format!("{}__{}__{}", trait_name_mangled, m.name, get_type_name_slug(&resolved_concrete_type));
-                let mangled_impl_fn_name_ref = Box::leak(mangled_impl_fn_name.into_boxed_str());
+                let method_fn_name = format!("{}__{}", m.name, get_type_name_slug(&resolved_concrete_type));
+                let method_fn_name_ref = Box::leak(method_fn_name.into_boxed_str());
                 
                 let hir_concrete_ty = type_to_hir(&resolved_concrete_type);
                 let mut mapping = std::collections::HashMap::new();
@@ -145,13 +145,13 @@ pub fn analyze<'a>(mut program: crate::hir::Program<'a>) -> Result<Program<'a>, 
                 }
                 
                 let new_fn = crate::hir::Function {
-                    name: mangled_impl_fn_name_ref,
+                    name: method_fn_name_ref,
                     generics: Vec::new(),
                     generic_contracts: Vec::new(),
                     params: substituted_params,
                     ret_type: substituted_ret.clone(),
                     body: substituted_body,
-                    module_name: m.module_name.clone(),
+                    module_name: trait_name_mangled.to_string(),
                     is_pub: true,
                 };
                 impl_generated_functions.push(new_fn);

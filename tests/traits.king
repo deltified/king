@@ -1,0 +1,46 @@
+trait MathCapable {
+    fn square(&mut self);
+    fn double(&mut self);
+}
+
+impl MathCapable for i64 {
+    fn square<T>(&mut self: T) {
+        let val = *self;
+        *self = val * val;
+    }
+    fn double<T>(&mut self: T) {
+        let val = *self;
+        *self = val * 2;
+    }
+}
+
+fn main() -> i64 {
+    let mut score = 0;
+    
+    let mut val = 5;
+    
+    // Check 'is' trait structural predicate
+    if val is MathCapable {
+        score = score + 10;
+    }
+    
+    let mut check_not_trait = 3.14;
+    if check_not_trait is MathCapable {
+        score = score + 100; // should not hit
+    } else {
+        score = score + 10;
+    }
+    
+    // Call methods
+    val.double();
+    if val == 10 {
+        score = score + 10;
+    }
+    
+    val.square();
+    if val == 100 {
+        score = score + 10;
+    }
+    
+    return score;
+}

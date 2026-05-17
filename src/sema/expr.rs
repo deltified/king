@@ -562,7 +562,10 @@ pub fn check_expr<'a>(
             let raw_dest_ty = Type::from(ty);
             let dest_ty = ctx.resolve_type(raw_dest_ty)?;
             let is_match = if let Type::Struct(ref trait_name) = dest_ty {
-                if ctx.lookup_trait_meta(trait_name).is_some() {
+                let is_trait = ctx.all_traits.iter().any(|t| {
+                    mangle_name(&t.module_name, t.original_name, false) == *trait_name
+                });
+                if is_trait {
                     let mut base_ty = &typed_expr.ty;
                     while let Type::Ref { ty, .. } = base_ty {
                         base_ty = ty;
