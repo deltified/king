@@ -130,73 +130,90 @@ pub fn check_expr<'a>(
             args,
         } => {
             let opt_template = resolve_generic_template(ctx, name).cloned();
-            let (param_names, param_defaults) = if let Some(template) = &opt_template {
-                let names = template.params.iter().map(|p| p.name.to_string()).collect::<Vec<_>>();
-                let defaults = template.params.iter().map(|p| p.default.clone()).collect::<Vec<_>>();
-                (names, defaults)
+            let has_others = if let Some(ref template) = opt_template {
+                template.params.iter().any(|p| p.name == "others")
             } else {
-                let meta = ctx.resolve_function(name)?;
-                (meta.param_names.clone(), meta.param_defaults.clone())
+                false
             };
 
-            let n = param_names.len();
-            let mut first_default_idx = n;
-            for (i, default_opt) in param_defaults.iter().enumerate() {
-                if default_opt.is_some() {
-                    first_default_idx = i;
-                    break;
+            let args = if has_others {
+                let mut positional = Vec::new();
+                for arg in args {
+                    if arg.name.is_some() {
+                        return Err("Named arguments are not supported for variadic functions".to_string());
+                    }
+                    positional.push(arg.value);
                 }
-            }
-
-            let mut positional_args = Vec::new();
-            let mut named_args = HashMap::new();
-            let mut seen_named = false;
-            for arg in args {
-                if let Some(arg_name) = arg.name {
-                    seen_named = true;
-                    if named_args.contains_key(arg_name) {
-                        return Err(format!("Duplicate argument for parameter '{}'", arg_name));
-                    }
-                    named_args.insert(arg_name, arg.value);
+                positional
+            } else {
+                let (param_names, param_defaults) = if let Some(template) = &opt_template {
+                    let names = template.params.iter().map(|p| p.name.to_string()).collect::<Vec<_>>();
+                    let defaults = template.params.iter().map(|p| p.default.clone()).collect::<Vec<_>>();
+                    (names, defaults)
                 } else {
-                    if seen_named {
-                        return Err("Positional arguments must appear before named arguments".to_string());
+                    let meta = ctx.resolve_function(name)?;
+                    (meta.param_names.clone(), meta.param_defaults.clone())
+                };
+
+                let n = param_names.len();
+                let mut first_default_idx = n;
+                for (i, default_opt) in param_defaults.iter().enumerate() {
+                    if default_opt.is_some() {
+                        first_default_idx = i;
+                        break;
                     }
-                    positional_args.push(arg.value);
                 }
-            }
 
-            if positional_args.len() > first_default_idx {
-                return Err(format!(
-                    "Function '{}' expects at most {} positional arguments, but {} were provided",
-                    name, first_default_idx, positional_args.len()
-                ));
-            }
-
-            let mut reordered_args = Vec::new();
-            for i in 0..n {
-                if i < positional_args.len() {
-                    if named_args.contains_key(param_names[i].as_str()) {
-                        return Err(format!("Parameter '{}' is provided both positionally and as a named argument", param_names[i]));
-                    }
-                    reordered_args.push(positional_args[i].clone());
-                } else {
-                    if let Some(val) = named_args.remove(param_names[i].as_str()) {
-                        reordered_args.push(val);
-                    } else if let Some(ref default_expr) = param_defaults[i] {
-                        reordered_args.push(default_expr.clone());
+                let mut positional_args = Vec::new();
+                let mut named_args = HashMap::new();
+                let mut seen_named = false;
+                for arg in args {
+                    if let Some(arg_name) = arg.name {
+                        seen_named = true;
+                        if named_args.contains_key(arg_name) {
+                            return Err(format!("Duplicate argument for parameter '{}'", arg_name));
+                        }
+                        named_args.insert(arg_name, arg.value);
                     } else {
-                        return Err(format!("Missing required argument for parameter '{}'", param_names[i]));
+                        if seen_named {
+                            return Err("Positional arguments must appear before named arguments".to_string());
+                        }
+                        positional_args.push(arg.value);
                     }
                 }
-            }
 
-            if !named_args.is_empty() {
-                let unknown_param = named_args.keys().next().unwrap();
-                return Err(format!("Function '{}' has no parameter named '{}'", name, unknown_param));
-            }
+                if positional_args.len() > first_default_idx {
+                    return Err(format!(
+                        "Function '{}' expects at most {} positional arguments, but {} were provided",
+                        name, first_default_idx, positional_args.len()
+                    ));
+                }
 
-            let args = reordered_args;
+                let mut reordered_args = Vec::new();
+                for i in 0..n {
+                    if i < positional_args.len() {
+                        if named_args.contains_key(param_names[i].as_str()) {
+                            return Err(format!("Parameter '{}' is provided both positionally and as a named argument", param_names[i]));
+                        }
+                        reordered_args.push(positional_args[i].clone());
+                    } else {
+                        if let Some(val) = named_args.remove(param_names[i].as_str()) {
+                            reordered_args.push(val);
+                        } else if let Some(ref default_expr) = param_defaults[i] {
+                            reordered_args.push(default_expr.clone());
+                        } else {
+                            return Err(format!("Missing required argument for parameter '{}'", param_names[i]));
+                        }
+                    }
+                }
+
+                if !named_args.is_empty() {
+                    let unknown_param = named_args.keys().next().unwrap();
+                    return Err(format!("Function '{}' has no parameter named '{}'", name, unknown_param));
+                }
+
+                reordered_args
+            };
 
             let (mangled_name, param_tys, ret_ty) = if let Some(template) = opt_template {
                 let mut resolved_type_args = Vec::new();
@@ -214,7 +231,23 @@ pub fn check_expr<'a>(
                     ));
                 }
 
-                let mangled_mono_name = get_mangled_mono_name(template.name, &resolved_type_args);
+                let others_count = if has_others {
+                    let normal_params_count = template.params.len() - 1;
+                    if args.len() < normal_params_count {
+                        return Err(format!(
+                            "Function '{}' expects at least {} arguments, found {}",
+                            name, normal_params_count, args.len()
+                        ));
+                    }
+                    args.len() - normal_params_count
+                } else {
+                    0
+                };
+
+                let mut mangled_mono_name = get_mangled_mono_name(template.name, &resolved_type_args);
+                if has_others {
+                    mangled_mono_name.push_str(&format!("_others_{}", others_count));
+                }
 
                 if !ctx.functions.contains_key(mangled_mono_name.as_str()) {
                     let mut mapping = HashMap::new();
@@ -258,10 +291,32 @@ pub fn check_expr<'a>(
                         .collect::<Vec<_>>();
 
                     let sub_ret = substitute_type(&template.ret_type, &mapping);
-                    let sub_body =
+                    let sub_body_substituted =
                         substitute_block(template.body.clone(), &mapping);
 
-                    let sema_param_tys: Vec<Type> = sub_params
+                    let mut final_params = Vec::new();
+                    for p in sub_params {
+                        if p.name == "others" {
+                            for idx in 0..others_count {
+                                let name = format!("others__{}", idx);
+                                final_params.push(crate::hir::Param {
+                                    name: Box::leak(name.into_boxed_str()),
+                                    ty: p.ty.clone(),
+                                    contract: None,
+                                    default: None,
+                                });
+                            }
+                        } else {
+                            final_params.push(p);
+                        }
+                    }
+
+                    let sub_body = crate::sema::generics::unroll_inline_for_block(
+                        sub_body_substituted,
+                        others_count as i64,
+                    )?;
+
+                    let sema_param_tys: Vec<Type> = final_params
                         .iter()
                         .map(|p| Type::from(p.ty.clone()))
                         .collect();
@@ -272,8 +327,8 @@ pub fn check_expr<'a>(
                         (sema_param_tys.clone(), sema_ret.clone()),
                     );
 
-                    let mono_names = sub_params.iter().map(|p| p.name.to_string()).collect();
-                    let mono_defaults = sub_params.iter().map(|p| p.default.clone()).collect();
+                    let mono_names = final_params.iter().map(|p| p.name.to_string()).collect();
+                    let mono_defaults = final_params.iter().map(|p| p.default.clone()).collect();
                     ctx.all_functions.push(FunctionMeta {
                         original_name: Box::leak(mangled_mono_name.clone().into_boxed_str()),
                         module_name: template.module_name.clone(),
@@ -293,7 +348,7 @@ pub fn check_expr<'a>(
                     ctx.push_scope();
 
                     let mut params = Vec::new();
-                    for (p, ty) in sub_params.iter().zip(&sema_param_tys) {
+                    for (p, ty) in final_params.iter().zip(&sema_param_tys) {
                         ctx.declare_var(p.name, ty.clone(), true);
                         let typed_contract = if let Some(ref c) = p.contract {
                             Some(check_expr(ctx, c.clone())?)
@@ -529,6 +584,9 @@ pub fn check_expr<'a>(
             }
             other => Err(format!("Unknown builtin function @{}", other)),
         },
+        crate::hir::Expr::IndexAccess { .. } => {
+            Err("subscripting is only supported on variadic others".to_string())
+        }
     }
 }
 

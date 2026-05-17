@@ -56,7 +56,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
     // First pass: populate raw functions
     let mut normal_functions = Vec::new();
     for f in program.functions {
-        if !f.generics.is_empty() {
+        if !f.generics.is_empty() || f.params.iter().any(|p| p.name == "others") {
             ctx.generic_templates.insert(f.name.to_string(), f);
         } else {
             let param_tys: Vec<Type> = f

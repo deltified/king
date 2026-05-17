@@ -209,5 +209,8 @@ pub fn check_statement<'a>(
                 ty: Type::Void,
             }))
         }
+        crate::hir::Statement::InlineFor { .. } => {
+            Err("inline for loops are only supported in variadic/generic functions".to_string())
+        }
     }
 }
