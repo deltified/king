@@ -108,7 +108,7 @@ pub fn eval_comptime_expr(
                 if args.len() != 1 {
                     return Err("puts expects 1 argument".to_string());
                 }
-                let val = eval_comptime_expr(&args[0], env, ctx)?;
+                let val = eval_comptime_expr(&args[0].value, env, ctx)?;
                 match val {
                     ComptimeVal::Str(s) => {
                         println!("{}", s);

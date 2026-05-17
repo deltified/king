@@ -124,7 +124,10 @@ pub fn substitute_expr<'a>(
                 .into_iter()
                 .map(|t| substitute_type(&t, mapping))
                 .collect(),
-            args: args.into_iter().map(|a| substitute_expr(a, mapping)).collect(),
+            args: args.into_iter().map(|a| crate::hir::CallArg {
+                name: a.name,
+                value: substitute_expr(a.value, mapping),
+            }).collect(),
         },
         crate::hir::Expr::As { expr, ty } => crate::hir::Expr::As {
             expr: Box::new(substitute_expr(*expr, mapping)),

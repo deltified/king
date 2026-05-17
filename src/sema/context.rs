@@ -15,6 +15,8 @@ pub struct FunctionMeta<'a> {
     pub is_extern: bool,
     pub param_types: Vec<Type>,
     pub ret_type: Type,
+    pub param_names: Vec<String>,
+    pub param_defaults: Vec<Option<crate::hir::Expr<'a>>>,
 }
 
 pub fn mangle_name(module_name: &str, name: &str, is_extern: bool) -> &'static str {

@@ -64,6 +64,8 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
                 .iter()
                 .map(|p| Type::from(p.ty.clone()))
                 .collect();
+            let param_names = f.params.iter().map(|p| p.name.to_string()).collect();
+            let param_defaults = f.params.iter().map(|p| p.default.clone()).collect();
             let ret_ty = Type::from(f.ret_type.clone());
             ctx.all_functions.push(FunctionMeta {
                 original_name: f.name,
@@ -72,6 +74,8 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
                 is_extern: false,
                 param_types: param_tys,
                 ret_type: ret_ty,
+                param_names,
+                param_defaults,
             });
             normal_functions.push(f);
         }
@@ -83,6 +87,8 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
             .iter()
             .map(|p| Type::from(p.ty.clone()))
             .collect();
+        let param_names = f.params.iter().map(|p| p.name.to_string()).collect();
+        let param_defaults = f.params.iter().map(|p| p.default.clone()).collect();
         let ret_ty = Type::from(f.ret_type.clone());
         ctx.all_functions.push(FunctionMeta {
             original_name: f.name,
@@ -91,6 +97,8 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
             is_extern: true,
             param_types: param_tys,
             ret_type: ret_ty,
+            param_names,
+            param_defaults,
         });
     }
 

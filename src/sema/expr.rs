@@ -130,6 +130,74 @@ pub fn check_expr<'a>(
             args,
         } => {
             let opt_template = resolve_generic_template(ctx, name).cloned();
+            let (param_names, param_defaults) = if let Some(template) = &opt_template {
+                let names = template.params.iter().map(|p| p.name.to_string()).collect::<Vec<_>>();
+                let defaults = template.params.iter().map(|p| p.default.clone()).collect::<Vec<_>>();
+                (names, defaults)
+            } else {
+                let meta = ctx.resolve_function(name)?;
+                (meta.param_names.clone(), meta.param_defaults.clone())
+            };
+
+            let n = param_names.len();
+            let mut first_default_idx = n;
+            for (i, default_opt) in param_defaults.iter().enumerate() {
+                if default_opt.is_some() {
+                    first_default_idx = i;
+                    break;
+                }
+            }
+
+            let mut positional_args = Vec::new();
+            let mut named_args = HashMap::new();
+            let mut seen_named = false;
+            for arg in args {
+                if let Some(arg_name) = arg.name {
+                    seen_named = true;
+                    if named_args.contains_key(arg_name) {
+                        return Err(format!("Duplicate argument for parameter '{}'", arg_name));
+                    }
+                    named_args.insert(arg_name, arg.value);
+                } else {
+                    if seen_named {
+                        return Err("Positional arguments must appear before named arguments".to_string());
+                    }
+                    positional_args.push(arg.value);
+                }
+            }
+
+            if positional_args.len() > first_default_idx {
+                return Err(format!(
+                    "Function '{}' expects at most {} positional arguments, but {} were provided",
+                    name, first_default_idx, positional_args.len()
+                ));
+            }
+
+            let mut reordered_args = Vec::new();
+            for i in 0..n {
+                if i < positional_args.len() {
+                    if named_args.contains_key(param_names[i].as_str()) {
+                        return Err(format!("Parameter '{}' is provided both positionally and as a named argument", param_names[i]));
+                    }
+                    reordered_args.push(positional_args[i].clone());
+                } else {
+                    if let Some(val) = named_args.remove(param_names[i].as_str()) {
+                        reordered_args.push(val);
+                    } else if let Some(ref default_expr) = param_defaults[i] {
+                        reordered_args.push(default_expr.clone());
+                    } else {
+                        return Err(format!("Missing required argument for parameter '{}'", param_names[i]));
+                    }
+                }
+            }
+
+            if !named_args.is_empty() {
+                let unknown_param = named_args.keys().next().unwrap();
+                return Err(format!("Function '{}' has no parameter named '{}'", name, unknown_param));
+            }
+
+            let args = reordered_args;
+
             let (mangled_name, param_tys, ret_ty) = if let Some(template) = opt_template {
                 let mut resolved_type_args = Vec::new();
                 for t in &type_args {
@@ -185,6 +253,7 @@ pub fn check_expr<'a>(
                             name: p.name,
                             ty: substitute_type(&p.ty, &mapping),
                             contract: p.contract.clone().map(|c| substitute_expr(c, &mapping)),
+                            default: p.default.clone().map(|d| substitute_expr(d, &mapping)),
                         })
                         .collect::<Vec<_>>();
 
@@ -203,6 +272,8 @@ pub fn check_expr<'a>(
                         (sema_param_tys.clone(), sema_ret.clone()),
                     );
 
+                    let mono_names = sub_params.iter().map(|p| p.name.to_string()).collect();
+                    let mono_defaults = sub_params.iter().map(|p| p.default.clone()).collect();
                     ctx.all_functions.push(FunctionMeta {
                         original_name: Box::leak(mangled_mono_name.clone().into_boxed_str()),
                         module_name: template.module_name.clone(),
@@ -210,6 +281,8 @@ pub fn check_expr<'a>(
                         is_extern: false,
                         param_types: sema_param_tys.clone(),
                         ret_type: sema_ret.clone(),
+                        param_names: mono_names,
+                        param_defaults: mono_defaults,
                     });
 
                     let old_ret_type = ctx.current_ret_type.clone();
