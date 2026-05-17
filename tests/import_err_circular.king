@@ -1,0 +1,5 @@
+import circular_dep;
+
+fn main() -> i64 {
+    return 0;
+}

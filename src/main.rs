@@ -56,6 +56,22 @@ fn load_all_files(
         }
         resolved_path.set_extension("king");
         
+        if !resolved_path.exists() {
+            // Fall back to resolving relative to the main file's parent directory (first stack element)
+            if let Some(root_file) = compilation_stack.first() {
+                if let Some(root_dir) = root_file.parent() {
+                    let mut fallback = root_dir.to_path_buf();
+                    for segment in imp {
+                        fallback.push(segment);
+                    }
+                    fallback.set_extension("king");
+                    if fallback.exists() {
+                        resolved_path = fallback;
+                    }
+                }
+            }
+        }
+        
         let imp_module_name = imp.join("::");
         load_all_files(&resolved_path, &imp_module_name, loaded_files, compilation_stack, modules)?;
     }
@@ -181,6 +197,7 @@ mod tests {
             ("tests/reference.king", 42),
             ("tests/struct_simple.king", 42),
             ("tests/struct_mutability.king", 42),
+            ("tests/import_success.king", 60),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();
@@ -244,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn test_borrow_checker_errors() {
+    fn test_compiler_errors() {
         let error_test_cases = vec![
             ("tests/borrow_err_double_mut.king", "already borrowed"),
             ("tests/borrow_err_mut_and_immut.king", "already borrowed mutably"),
@@ -254,6 +271,8 @@ mod tests {
             ("tests/borrow_err_return_local_ref.king", "Cannot return reference to local variable"),
             ("tests/borrow_err_struct_double_mut.king", "already borrowed"),
             ("tests/borrow_err_struct_write_borrowed.king", "borrowed"),
+            ("tests/import_err_private.king", "private"),
+            ("tests/import_err_circular.king", "Circular import detected"),
         ];
 
         let temp_dir = std::env::temp_dir();

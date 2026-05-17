@@ -1,0 +1,7 @@
+import geometry::vector;
+import math;
+
+fn main() -> i64 {
+    let p = Point { x: 10, y: 20 };
+    return double_add(&p);
+}
