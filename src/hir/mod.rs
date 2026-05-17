@@ -20,6 +20,8 @@ pub mod ast {
         F64,
         Bool,
         Void,
+        Char,
+        Str,
         Ref {
             is_mut: bool,
             ty: Box<HirType>,
@@ -100,6 +102,7 @@ pub mod ast {
         Int(i64),
         Float(f64),
         Bool(bool),
+        Str(String),
         Binary {
             op: BinOp,
             lhs: Box<Expr<'a>>,
@@ -180,6 +183,8 @@ fn lower_type(ty: crate::parser::Type) -> HirType {
             "i64" => HirType::I64,
             "f64" => HirType::F64,
             "bool" => HirType::Bool,
+            "char" => HirType::Char,
+            "str" => HirType::Str,
             other => HirType::Struct(other.to_string()),
         },
         crate::parser::Type::Ref { is_mut, ty } => HirType::Ref {
@@ -238,6 +243,7 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
         crate::parser::Expr::Int(val) => Expr::Int(val),
         crate::parser::Expr::Float(val) => Expr::Float(val),
         crate::parser::Expr::Bool(val) => Expr::Bool(val),
+        crate::parser::Expr::Str(val) => Expr::Str(val),
         crate::parser::Expr::Binary { op, lhs, rhs } => Expr::Binary {
             op,
             lhs: Box::new(build_expr(*lhs)),
