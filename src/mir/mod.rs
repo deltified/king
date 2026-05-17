@@ -27,6 +27,10 @@ pub mod ast {
         Ref(bool, VarId),
         RefVar(bool, &'a str),
         Deref(Operand<'a>),
+        StructLiteral(Vec<Operand<'a>>),
+        FieldAccess(Operand<'a>, usize),
+        RefField(bool, VarId, usize),
+        RefFieldVar(bool, &'a str, usize),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +40,10 @@ pub mod ast {
         Store(VarId, Operand<'a>),
         StoreVar(&'a str, Operand<'a>),
         Call(&'a str, Vec<Operand<'a>>),
+        AssignField(VarId, usize, Operand<'a>),
+        AssignFieldVar(&'a str, usize, Operand<'a>),
+        StoreField(VarId, usize, Operand<'a>),
+        StoreFieldVar(&'a str, usize, Operand<'a>),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +76,7 @@ pub mod ast {
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct Program<'a> {
+        pub structs: Vec<crate::sema::ast::StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
     }
 }
@@ -84,6 +93,7 @@ struct MirBuilderContext<'a> {
     var_map: HashMap<&'a str, VarId>,
     next_block_id: usize,
     loop_stack: Vec<(BasicBlockId, BasicBlockId)>, // (continue_target, break_target)
+    structs: HashMap<String, Vec<String>>,
 }
 
 impl<'a> MirBuilderContext<'a> {
@@ -95,6 +105,7 @@ impl<'a> MirBuilderContext<'a> {
             var_map: HashMap::new(),
             next_block_id: 0,
             loop_stack: Vec::new(),
+            structs: HashMap::new(),
         }
     }
 
@@ -146,8 +157,16 @@ impl<'a> MirBuilderContext<'a> {
 
 pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
     let mut functions = Vec::new();
+    
+    let mut structs_map = HashMap::new();
+    for s in &program.structs {
+        let field_names: Vec<String> = s.fields.iter().map(|p| p.name.to_string()).collect();
+        structs_map.insert(s.name.to_string(), field_names);
+    }
+
     for f in program.functions {
         let mut ctx = MirBuilderContext::new();
+        ctx.structs = structs_map.clone();
         
         let entry = ctx.new_block();
         ctx.start_block(entry);
@@ -169,7 +188,7 @@ pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
             vars: ctx.vars,
         });
     }
-    Program { functions }
+    Program { structs: program.structs, functions }
 }
 
 fn compile_block<'a>(ctx: &mut MirBuilderContext<'a>, block: crate::sema::Block<'a>) {
@@ -199,6 +218,50 @@ fn compile_statement<'a>(ctx: &mut MirBuilderContext<'a>, stmt: crate::sema::Sta
                 } else {
                     ctx.push_statement(Statement::AssignVar(name, val_op));
                 }
+            }
+        }
+        crate::sema::Statement::AssignField { expr: base_expr, field, value } => {
+            let val_op = compile_expr(ctx, value);
+            let mut current_ty = &base_expr.ty;
+            let is_base_ref = matches!(current_ty, Type::Ref { .. });
+            while let Type::Ref { ty, .. } = current_ty {
+                current_ty = ty;
+            }
+            let struct_name = match current_ty {
+                Type::Struct(name) => name,
+                _ => unreachable!(),
+            };
+            let fields_list = ctx.structs.get(struct_name).cloned().unwrap_or_default();
+            let field_index = fields_list.iter().position(|f| f == field).unwrap();
+            
+            match base_expr.kind {
+                crate::sema::ast::ExprKind::Ident(name) => {
+                    if is_base_ref {
+                        if let Some(var_id) = ctx.var_map.get(name).copied() {
+                            ctx.push_statement(Statement::StoreField(var_id, field_index, val_op));
+                        } else {
+                            ctx.push_statement(Statement::StoreFieldVar(name, field_index, val_op));
+                        }
+                    } else {
+                        if let Some(var_id) = ctx.var_map.get(name).copied() {
+                            ctx.push_statement(Statement::AssignField(var_id, field_index, val_op));
+                        } else {
+                            ctx.push_statement(Statement::AssignFieldVar(name, field_index, val_op));
+                        }
+                    }
+                }
+                crate::sema::ast::ExprKind::Deref(sub_expr) => {
+                    if let crate::sema::ast::ExprKind::Ident(name) = sub_expr.kind {
+                        if let Some(var_id) = ctx.var_map.get(name).copied() {
+                            ctx.push_statement(Statement::StoreField(var_id, field_index, val_op));
+                        } else {
+                            ctx.push_statement(Statement::StoreFieldVar(name, field_index, val_op));
+                        }
+                    } else {
+                        unreachable!("Deref of complex expressions not supported");
+                    }
+                }
+                _ => unreachable!(),
             }
         }
         crate::sema::Statement::Expr(expr) => {
@@ -347,7 +410,29 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
                         ctx.push_statement(Statement::Assign(temp_var, Rvalue::RefVar(is_mut, name)));
                     }
                 }
-                _ => panic!("Borrow target must be an identifier"),
+                crate::sema::ast::ExprKind::FieldAccess { expr: base_expr, field } => {
+                    let mut current_ty = &base_expr.ty;
+                    while let Type::Ref { ty, .. } = current_ty {
+                        current_ty = ty;
+                    }
+                    let struct_name = match current_ty {
+                        Type::Struct(name) => name,
+                        _ => unreachable!(),
+                    };
+                    let fields_list = ctx.structs.get(struct_name).cloned().unwrap_or_default();
+                    let field_index = fields_list.iter().position(|f| f == field).unwrap();
+                    
+                    if let crate::sema::ast::ExprKind::Ident(name) = base_expr.kind {
+                        if let Some(var_id) = ctx.var_map.get(name).copied() {
+                            ctx.push_statement(Statement::Assign(temp_var, Rvalue::RefField(is_mut, var_id, field_index)));
+                        } else {
+                            ctx.push_statement(Statement::Assign(temp_var, Rvalue::RefFieldVar(is_mut, name, field_index)));
+                        }
+                    } else {
+                        panic!("Field borrow on complex base expressions not supported");
+                    }
+                }
+                _ => panic!("Borrow target must be an identifier or field access"),
             }
             Operand::Var(temp_var)
         }
@@ -355,6 +440,34 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
             let sub_op = compile_expr(ctx, *sub_expr);
             let temp_var = ctx.declare_temp(expr.ty.clone());
             ctx.push_statement(Statement::Assign(temp_var, Rvalue::Deref(sub_op)));
+            Operand::Var(temp_var)
+        }
+        crate::sema::ast::ExprKind::StructLiteral { name, fields } => {
+            let fields_list = ctx.structs.get(name).cloned().unwrap_or_default();
+            let mut ops = Vec::new();
+            for field_name in &fields_list {
+                let init = fields.iter().find(|f| f.name == field_name).unwrap();
+                ops.push(compile_expr(ctx, init.value.clone()));
+            }
+            let temp_var = ctx.declare_temp(expr.ty.clone());
+            ctx.push_statement(Statement::Assign(temp_var, Rvalue::StructLiteral(ops)));
+            Operand::Var(temp_var)
+        }
+        crate::sema::ast::ExprKind::FieldAccess { expr: sub_expr, field } => {
+            let sub_op = compile_expr(ctx, *sub_expr.clone());
+            let mut current_ty = &sub_expr.ty;
+            while let Type::Ref { ty, .. } = current_ty {
+                current_ty = ty;
+            }
+            let struct_name = match current_ty {
+                Type::Struct(name) => name,
+                _ => unreachable!(),
+            };
+            let fields_list = ctx.structs.get(struct_name).cloned().unwrap_or_default();
+            let field_index = fields_list.iter().position(|f| f == field).unwrap();
+            
+            let temp_var = ctx.declare_temp(expr.ty.clone());
+            ctx.push_statement(Statement::Assign(temp_var, Rvalue::FieldAccess(sub_op, field_index)));
             Operand::Var(temp_var)
         }
     }
