@@ -4,6 +4,7 @@ use inkwell::builder::Builder;
 use inkwell::values::{PointerValue, BasicValueEnum};
 use inkwell::types::{BasicTypeEnum, BasicType};
 use inkwell::IntPredicate;
+use inkwell::FloatPredicate;
 use std::collections::HashMap;
 use crate::mir;
 use crate::sema::ast::Type;
@@ -23,6 +24,25 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub fn compile_program(self, program: mir::Program<'ctx>) -> Module<'ctx> {
+        // Pre-register all function signatures first to support mutual/forward calls
+        for f in &program.functions {
+            let param_types: Vec<BasicTypeEnum<'ctx>> = f.params.iter()
+                .map(|(_, ty)| self.get_llvm_type(*ty))
+                .collect();
+            
+            let inkwell_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = param_types.iter()
+                .map(|t| (*t).into())
+                .collect();
+
+            let fn_type = if f.ret_type == Type::Void {
+                self.context.void_type().fn_type(&inkwell_param_types, false)
+            } else {
+                self.get_llvm_type(f.ret_type).fn_type(&inkwell_param_types, false)
+            };
+
+            self.module.add_function(f.name, fn_type, None);
+        }
+
         for f in program.functions {
             self.compile_function(f);
         }
@@ -32,27 +52,14 @@ impl<'ctx> Codegen<'ctx> {
     fn get_llvm_type(&self, ty: Type) -> BasicTypeEnum<'ctx> {
         match ty {
             Type::I64 => self.context.i64_type().as_basic_type_enum(),
+            Type::F64 => self.context.f64_type().as_basic_type_enum(),
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Void => panic!("Void type cannot be converted to BasicTypeEnum"),
         }
     }
 
     fn compile_function(&self, f: mir::Function<'ctx>) {
-        let param_types: Vec<BasicTypeEnum<'ctx>> = f.params.iter()
-            .map(|(_, ty)| self.get_llvm_type(*ty))
-            .collect();
-        
-        let inkwell_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = param_types.iter()
-            .map(|t| (*t).into())
-            .collect();
-
-        let fn_type = if f.ret_type == Type::Void {
-            self.context.void_type().fn_type(&inkwell_param_types, false)
-        } else {
-            self.get_llvm_type(f.ret_type).fn_type(&inkwell_param_types, false)
-        };
-
-        let fn_val = self.module.add_function(f.name, fn_type, None);
+        let fn_val = self.module.get_function(f.name).unwrap();
 
         // Prepend an entry block for allocations to prevent PHI node requirements
         let alloc_bb = self.context.append_basic_block(fn_val, "entry_allocas");
@@ -147,6 +154,9 @@ impl<'ctx> Codegen<'ctx> {
             mir::Operand::Int(val) => {
                 self.context.i64_type().const_int(*val as u64, false).into()
             }
+            mir::Operand::Float(val) => {
+                self.context.f64_type().const_float(*val).into()
+            }
             mir::Operand::Bool(val) => {
                 self.context.bool_type().const_int(if *val { 1 } else { 0 }, false).into()
             }
@@ -184,29 +194,88 @@ impl<'ctx> Codegen<'ctx> {
                         self.builder.build_not(int_val, "not_val").unwrap().into()
                     }
                     UnOp::Neg => {
-                        let int_val = val.into_int_value();
-                        self.builder.build_int_neg(int_val, "neg_val").unwrap().into()
+                        if val.is_float_value() {
+                            self.builder.build_float_neg(val.into_float_value(), "fneg_val").unwrap().into()
+                        } else {
+                            let int_val = val.into_int_value();
+                            self.builder.build_int_neg(int_val, "neg_val").unwrap().into()
+                        }
                     }
                 }
             }
             mir::Rvalue::Binary(op, lhs_op, rhs_op) => {
                 let lhs_val = self.compile_operand(lhs_op, var_ptrs, param_ptrs, vars, params);
                 let rhs_val = self.compile_operand(rhs_op, var_ptrs, param_ptrs, vars, params);
-                match op {
-                    BinOp::Add => self.builder.build_int_add(lhs_val.into_int_value(), rhs_val.into_int_value(), "add_tmp").unwrap().into(),
-                    BinOp::Sub => self.builder.build_int_sub(lhs_val.into_int_value(), rhs_val.into_int_value(), "sub_tmp").unwrap().into(),
-                    BinOp::Mul => self.builder.build_int_mul(lhs_val.into_int_value(), rhs_val.into_int_value(), "mul_tmp").unwrap().into(),
-                    BinOp::Div => self.builder.build_int_signed_div(lhs_val.into_int_value(), rhs_val.into_int_value(), "div_tmp").unwrap().into(),
-                    
-                    BinOp::Eq => self.builder.build_int_compare(IntPredicate::EQ, lhs_val.into_int_value(), rhs_val.into_int_value(), "eq_tmp").unwrap().into(),
-                    BinOp::Ne => self.builder.build_int_compare(IntPredicate::NE, lhs_val.into_int_value(), rhs_val.into_int_value(), "ne_tmp").unwrap().into(),
-                    BinOp::Lt => self.builder.build_int_compare(IntPredicate::SLT, lhs_val.into_int_value(), rhs_val.into_int_value(), "lt_tmp").unwrap().into(),
-                    BinOp::Le => self.builder.build_int_compare(IntPredicate::SLE, lhs_val.into_int_value(), rhs_val.into_int_value(), "le_tmp").unwrap().into(),
-                    BinOp::Gt => self.builder.build_int_compare(IntPredicate::SGT, lhs_val.into_int_value(), rhs_val.into_int_value(), "gt_tmp").unwrap().into(),
-                    BinOp::Ge => self.builder.build_int_compare(IntPredicate::SGE, lhs_val.into_int_value(), rhs_val.into_int_value(), "ge_tmp").unwrap().into(),
-                    
-                    BinOp::And => self.builder.build_and(lhs_val.into_int_value(), rhs_val.into_int_value(), "and_tmp").unwrap().into(),
-                    BinOp::Or => self.builder.build_or(lhs_val.into_int_value(), rhs_val.into_int_value(), "or_tmp").unwrap().into(),
+                let is_float = lhs_val.is_float_value();
+
+                if is_float {
+                    let l = lhs_val.into_float_value();
+                    let r = rhs_val.into_float_value();
+                    match op {
+                        BinOp::Add => self.builder.build_float_add(l, r, "fadd_tmp").unwrap().into(),
+                        BinOp::Sub => self.builder.build_float_sub(l, r, "fsub_tmp").unwrap().into(),
+                        BinOp::Mul => self.builder.build_float_mul(l, r, "fmul_tmp").unwrap().into(),
+                        BinOp::Div => self.builder.build_float_div(l, r, "fdiv_tmp").unwrap().into(),
+                        
+                        BinOp::Eq => self.builder.build_float_compare(FloatPredicate::OEQ, l, r, "feq_tmp").unwrap().into(),
+                        BinOp::Ne => self.builder.build_float_compare(FloatPredicate::UNE, l, r, "fne_tmp").unwrap().into(),
+                        BinOp::Lt => self.builder.build_float_compare(FloatPredicate::OLT, l, r, "flt_tmp").unwrap().into(),
+                        BinOp::Le => self.builder.build_float_compare(FloatPredicate::OLE, l, r, "fle_tmp").unwrap().into(),
+                        BinOp::Gt => self.builder.build_float_compare(FloatPredicate::OGT, l, r, "fgt_tmp").unwrap().into(),
+                        BinOp::Ge => self.builder.build_float_compare(FloatPredicate::OGE, l, r, "fge_tmp").unwrap().into(),
+                        
+                        BinOp::And | BinOp::Or => panic!("Logical operators not supported on float values"),
+                    }
+                } else {
+                    let l = lhs_val.into_int_value();
+                    let r = rhs_val.into_int_value();
+                    match op {
+                        BinOp::Add => self.builder.build_int_add(l, r, "add_tmp").unwrap().into(),
+                        BinOp::Sub => self.builder.build_int_sub(l, r, "sub_tmp").unwrap().into(),
+                        BinOp::Mul => self.builder.build_int_mul(l, r, "mul_tmp").unwrap().into(),
+                        BinOp::Div => self.builder.build_int_signed_div(l, r, "div_tmp").unwrap().into(),
+                        
+                        BinOp::Eq => self.builder.build_int_compare(IntPredicate::EQ, l, r, "eq_tmp").unwrap().into(),
+                        BinOp::Ne => self.builder.build_int_compare(IntPredicate::NE, l, r, "ne_tmp").unwrap().into(),
+                        BinOp::Lt => self.builder.build_int_compare(IntPredicate::SLT, l, r, "lt_tmp").unwrap().into(),
+                        BinOp::Le => self.builder.build_int_compare(IntPredicate::SLE, l, r, "le_tmp").unwrap().into(),
+                        BinOp::Gt => self.builder.build_int_compare(IntPredicate::SGT, l, r, "gt_tmp").unwrap().into(),
+                        BinOp::Ge => self.builder.build_int_compare(IntPredicate::SGE, l, r, "ge_tmp").unwrap().into(),
+                        
+                        BinOp::And => self.builder.build_and(l, r, "and_tmp").unwrap().into(),
+                        BinOp::Or => self.builder.build_or(l, r, "or_tmp").unwrap().into(),
+                    }
+                }
+            }
+            mir::Rvalue::Call(name, args) => {
+                let fn_val = self.module.get_function(name)
+                    .unwrap_or_else(|| panic!("Function {} not found in LLVM module", name));
+                let mut compiled_args = Vec::new();
+                for arg in args {
+                    let val = self.compile_operand(arg, var_ptrs, param_ptrs, vars, params);
+                    compiled_args.push(val.into());
+                }
+                let call_val = self.builder.build_call(fn_val, &compiled_args, "call_tmp").unwrap();
+                call_val.try_as_basic_value().left().expect("Expected function call to return a value")
+            }
+            mir::Rvalue::As(op, dest_ty) => {
+                let val = self.compile_operand(op, var_ptrs, param_ptrs, vars, params);
+                let src_ty = match op {
+                    mir::Operand::Var(vid) => vars[vid.0],
+                    mir::Operand::Int(_) => Type::I64,
+                    mir::Operand::Float(_) => Type::F64,
+                    mir::Operand::Bool(_) => Type::Bool,
+                    mir::Operand::Ident(name) => params.iter().find(|(n, _)| *n == *name).map(|(_, t)| *t).unwrap(),
+                };
+                
+                match (src_ty, dest_ty) {
+                    (Type::I64, Type::F64) => {
+                        self.builder.build_signed_int_to_float(val.into_int_value(), self.context.f64_type(), "cast_i64_f64").unwrap().into()
+                    }
+                    (Type::F64, Type::I64) => {
+                        self.builder.build_float_to_signed_int(val.into_float_value(), self.context.i64_type(), "cast_f64_i64").unwrap().into()
+                    }
+                    _ => val,
                 }
             }
         }
