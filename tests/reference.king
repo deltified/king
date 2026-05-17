@@ -1,0 +1,26 @@
+fn deref_add(x: &i64, y: i64) -> i64 {
+    return *x + y;
+}
+
+fn mutate_val(x: &mut i64) {
+    *x = 100;
+    return;
+}
+
+fn main() -> i64 {
+    let mut a = 42;
+    
+    let b = deref_add(&a, 8);
+    
+    if b != 50 {
+        return 1;
+    }
+    
+    mutate_val(&mut a);
+    
+    if a != 100 {
+        return 2;
+    }
+    
+    return 42;
+}

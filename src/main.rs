@@ -90,6 +90,7 @@ mod tests {
             ("tests/fibonacci.king", 21),
             ("tests/break_continue.king", 50),
             ("tests/casts.king", 7),
+            ("tests/reference.king", 42),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();
