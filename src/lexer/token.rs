@@ -4,6 +4,8 @@ pub enum Token<'a> {
     Fn,
     Return,
     Mut,
+    Import,
+    Pub,
     
     If,
     Else,
@@ -31,6 +33,7 @@ pub enum Token<'a> {
     Semi, 
     
     Colon,
+    ColonColon,
     Comma,
     LBrace,
     RBrace,

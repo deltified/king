@@ -85,7 +85,15 @@ impl<'a> Lexer<'a> {
             b'(' => { self.pos += 1; Token::LParen }
             b')' => { self.pos += 1; Token::RParen }
             b';' => { self.pos += 1; Token::Semi }
-            b':' => { self.pos += 1; Token::Colon }
+            b':' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b':' {
+                    self.pos += 2;
+                    Token::ColonColon
+                } else {
+                    self.pos += 1;
+                    Token::Colon
+                }
+            }
             b',' => { self.pos += 1; Token::Comma }
             b'{' => { self.pos += 1; Token::LBrace }
             b'}' => { self.pos += 1; Token::RBrace }
@@ -182,6 +190,8 @@ impl<'a> Lexer<'a> {
             "break" => Token::Break,
             "continue" => Token::Continue,
             "struct" => Token::Struct,
+            "import" => Token::Import,
+            "pub" => Token::Pub,
             _ => Token::Ident(text),
         }
     }
