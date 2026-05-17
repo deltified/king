@@ -84,6 +84,24 @@ fn add_rvalue_uses<'a>(rvalue: &Rvalue<'a>, uses: &mut Vec<Place<'a>>) {
                 uses.push(p);
             }
         }
+        Rvalue::StructLiteral(ops) => {
+            for op in ops {
+                if let Some(p) = get_operand_place(op) {
+                    uses.push(p);
+                }
+            }
+        }
+        Rvalue::FieldAccess(op, _) => {
+            if let Some(p) = get_operand_place(op) {
+                uses.push(p);
+            }
+        }
+        Rvalue::RefField(_, vid, _) => {
+            uses.push(Place::Local(*vid));
+        }
+        Rvalue::RefFieldVar(_, name, _) => {
+            uses.push(Place::Param(name));
+        }
     }
 }
 
@@ -118,6 +136,30 @@ fn get_stmt_defs_uses<'a>(stmt: &Statement<'a>) -> (Option<Place<'a>>, Vec<Place
                 if let Some(p) = get_operand_place(arg) {
                     uses.push(p);
                 }
+            }
+        }
+        Statement::AssignField(var_id, _, operand) => {
+            def = Some(Place::Local(*var_id));
+            if let Some(p) = get_operand_place(operand) {
+                uses.push(p);
+            }
+        }
+        Statement::AssignFieldVar(name, _, operand) => {
+            def = Some(Place::Param(name));
+            if let Some(p) = get_operand_place(operand) {
+                uses.push(p);
+            }
+        }
+        Statement::StoreField(var_id, _, operand) => {
+            uses.push(Place::Local(*var_id));
+            if let Some(p) = get_operand_place(operand) {
+                uses.push(p);
+            }
+        }
+        Statement::StoreFieldVar(name, _, operand) => {
+            uses.push(Place::Param(name));
+            if let Some(p) = get_operand_place(operand) {
+                uses.push(p);
             }
         }
     }
@@ -230,6 +272,20 @@ fn transfer_statement<'a>(
                     state.entry(def_place).or_default().insert(loan);
                 }
                 Rvalue::RefVar(is_mut, target_name) => {
+                    let loan = Loan {
+                        place: Place::Param(target_name),
+                        is_mut: *is_mut,
+                    };
+                    state.entry(def_place).or_default().insert(loan);
+                }
+                Rvalue::RefField(is_mut, target_vid, _) => {
+                    let loan = Loan {
+                        place: Place::Local(*target_vid),
+                        is_mut: *is_mut,
+                    };
+                    state.entry(def_place).or_default().insert(loan);
+                }
+                Rvalue::RefFieldVar(is_mut, target_name, _) => {
                     let loan = Loan {
                         place: Place::Param(target_name),
                         is_mut: *is_mut,
@@ -493,6 +549,12 @@ fn check_stmt<'a>(
         Statement::Assign(_, Rvalue::RefVar(is_mut, name)) => {
             check_borrow_conflict(func, Place::Param(name), *is_mut, &active_loans)?;
         }
+        Statement::Assign(_, Rvalue::RefField(is_mut, target_vid, _)) => {
+            check_borrow_conflict(func, Place::Local(*target_vid), *is_mut, &active_loans)?;
+        }
+        Statement::Assign(_, Rvalue::RefFieldVar(is_mut, name, _)) => {
+            check_borrow_conflict(func, Place::Param(name), *is_mut, &active_loans)?;
+        }
         _ => {}
     }
 
@@ -511,6 +573,12 @@ fn check_stmt<'a>(
             check_deref_write_access(func, Place::Local(*var_id), borrows, live)?;
         }
         Statement::StoreVar(name, _) => {
+            check_deref_write_access(func, Place::Param(name), borrows, live)?;
+        }
+        Statement::StoreField(var_id, _, _) => {
+            check_deref_write_access(func, Place::Local(*var_id), borrows, live)?;
+        }
+        Statement::StoreFieldVar(name, _, _) => {
             check_deref_write_access(func, Place::Param(name), borrows, live)?;
         }
         _ => {}
