@@ -24,12 +24,17 @@ pub mod ast {
         Unary(UnOp, Operand<'a>),
         Call(&'a str, Vec<Operand<'a>>),
         As(Operand<'a>, Type),
+        Ref(bool, VarId),
+        RefVar(bool, &'a str),
+        Deref(Operand<'a>),
     }
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum Statement<'a> {
         Assign(VarId, Rvalue<'a>),
         AssignVar(&'a str, Operand<'a>),
+        Store(VarId, Operand<'a>),
+        StoreVar(&'a str, Operand<'a>),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -146,7 +151,7 @@ pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
         let entry = ctx.new_block();
         ctx.start_block(entry);
 
-        let params: Vec<(&'a str, Type)> = f.params.iter().map(|p| (p.name, p.ty)).collect();
+        let params: Vec<(&'a str, Type)> = f.params.iter().map(|p| (p.name, p.ty.clone())).collect();
 
         compile_block(&mut ctx, f.body);
 
@@ -175,22 +180,24 @@ fn compile_block<'a>(ctx: &mut MirBuilderContext<'a>, block: crate::sema::Block<
 fn compile_statement<'a>(ctx: &mut MirBuilderContext<'a>, stmt: crate::sema::Statement<'a>) {
     match stmt {
         crate::sema::Statement::Let { name, value, .. } => {
-            let val_op = compile_expr(ctx, value);
-            let var_id = ctx.declare_var(name, match &val_op {
-                Operand::Int(_) => Type::I64,
-                Operand::Float(_) => Type::F64,
-                Operand::Bool(_) => Type::Bool,
-                Operand::Var(vid) => ctx.vars[vid.0],
-                Operand::Ident(_) => Type::I64,
-            });
+            let val_op = compile_expr(ctx, value.clone());
+            let var_id = ctx.declare_var(name, value.ty);
             ctx.push_statement(Statement::Assign(var_id, Rvalue::Use(val_op)));
         }
-        crate::sema::Statement::Assign { name, value } => {
+        crate::sema::Statement::Assign { name, is_deref, value } => {
             let val_op = compile_expr(ctx, value);
-            if let Some(var_id) = ctx.var_map.get(name).copied() {
-                ctx.push_statement(Statement::Assign(var_id, Rvalue::Use(val_op)));
+            if is_deref {
+                if let Some(var_id) = ctx.var_map.get(name).copied() {
+                    ctx.push_statement(Statement::Store(var_id, val_op));
+                } else {
+                    ctx.push_statement(Statement::StoreVar(name, val_op));
+                }
             } else {
-                ctx.push_statement(Statement::AssignVar(name, val_op));
+                if let Some(var_id) = ctx.var_map.get(name).copied() {
+                    ctx.push_statement(Statement::Assign(var_id, Rvalue::Use(val_op)));
+                } else {
+                    ctx.push_statement(Statement::AssignVar(name, val_op));
+                }
             }
         }
         crate::sema::Statement::Expr(expr) => {
@@ -322,6 +329,26 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
                 temp_var,
                 Rvalue::As(sub_op, ty),
             ));
+            Operand::Var(temp_var)
+        }
+        crate::sema::ast::ExprKind::Borrow { is_mut, expr: sub_expr } => {
+            let temp_var = ctx.declare_temp(expr.ty.clone());
+            match &sub_expr.kind {
+                crate::sema::ast::ExprKind::Ident(name) => {
+                    if let Some(var_id) = ctx.var_map.get(name).copied() {
+                        ctx.push_statement(Statement::Assign(temp_var, Rvalue::Ref(is_mut, var_id)));
+                    } else {
+                        ctx.push_statement(Statement::Assign(temp_var, Rvalue::RefVar(is_mut, name)));
+                    }
+                }
+                _ => panic!("Borrow target must be an identifier"),
+            }
+            Operand::Var(temp_var)
+        }
+        crate::sema::ast::ExprKind::Deref(sub_expr) => {
+            let sub_op = compile_expr(ctx, *sub_expr);
+            let temp_var = ctx.declare_temp(expr.ty.clone());
+            ctx.push_statement(Statement::Assign(temp_var, Rvalue::Deref(sub_op)));
             Operand::Var(temp_var)
         }
     }
