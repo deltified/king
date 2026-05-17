@@ -14,6 +14,8 @@ fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
     let mut hir_structs = Vec::new();
     let mut hir_functions = Vec::new();
     let mut hir_extern_functions = Vec::new();
+    let mut hir_traits = Vec::new();
+    let mut hir_impls = Vec::new();
     let mut imports_map = std::collections::HashMap::new();
     
     for module in resolver.modules {
@@ -21,6 +23,8 @@ fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
         hir_structs.extend(hir_prog.structs);
         hir_functions.extend(hir_prog.functions);
         hir_extern_functions.extend(hir_prog.extern_functions);
+        hir_traits.extend(hir_prog.traits);
+        hir_impls.extend(hir_prog.impls);
         
         let imported_names: Vec<String> = module.imports.into_iter().map(|imp| imp.join("::")).collect();
         imports_map.insert(module.name, imported_names);
@@ -30,6 +34,8 @@ fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
         structs: hir_structs,
         functions: hir_functions,
         extern_functions: hir_extern_functions,
+        traits: hir_traits,
+        impls: hir_impls,
         imports: imports_map,
     };
     

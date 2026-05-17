@@ -6,6 +6,8 @@ pub mod ast {
         pub structs: Vec<StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
         pub extern_functions: Vec<ExternFunction<'a>>,
+        pub traits: Vec<TraitDef<'a>>,
+        pub impls: Vec<ImplDef<'a>>,
         pub imports: std::collections::HashMap<String, Vec<String>>,
     }
 
@@ -81,6 +83,29 @@ pub mod ast {
     }
 
     #[derive(Debug, Clone, PartialEq)]
+    pub struct TraitMethod<'a> {
+        pub name: &'a str,
+        pub params: Vec<Param<'a>>,
+        pub ret_type: HirType,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct TraitDef<'a> {
+        pub name: &'a str,
+        pub methods: Vec<TraitMethod<'a>>,
+        pub module_name: String,
+        pub is_pub: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ImplDef<'a> {
+        pub trait_name: &'a str,
+        pub for_types: Vec<HirType>,
+        pub methods: Vec<Function<'a>>,
+        pub module_name: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     pub struct Block<'a> {
         pub statements: Vec<Statement<'a>>,
     }
@@ -145,6 +170,11 @@ pub mod ast {
             type_args: Vec<HirType>,
             args: Vec<CallArg<'a>>,
         },
+        MethodCall {
+            expr: Box<Expr<'a>>,
+            method: &'a str,
+            args: Vec<CallArg<'a>>,
+        },
         As {
             expr: Box<Expr<'a>>,
             ty: HirType,
@@ -183,6 +213,8 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
     let mut structs = Vec::new();
     let mut functions = Vec::new();
     let mut extern_functions = Vec::new();
+    let mut traits = Vec::new();
+    let mut impls = Vec::new();
 
     for stmt in program.statements {
         match stmt {
@@ -234,10 +266,62 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                     is_pub,
                 });
             }
+            crate::parser::Statement::TraitDef { name, methods, is_pub } => {
+                let lowered_methods = methods.into_iter().map(|m| TraitMethod {
+                    name: m.name,
+                    params: m.params.into_iter().map(|p| Param {
+                        name: p.name,
+                        ty: lower_type(p.ty),
+                        contract: p.contract.map(build_expr),
+                        default: p.default.map(build_expr),
+                    }).collect(),
+                    ret_type: m.ret_type.map(lower_type).unwrap_or(HirType::Void),
+                }).collect();
+                traits.push(TraitDef {
+                    name,
+                    methods: lowered_methods,
+                    module_name: module_name.to_string(),
+                    is_pub,
+                });
+            }
+            crate::parser::Statement::ImplDef { trait_name, for_types, methods } => {
+                let lowered_methods = methods.into_iter().map(|m| {
+                    match m {
+                        crate::parser::Statement::Function { name, generics, generic_contracts, params, ret_type, body, is_pub } => {
+                            let params = params.into_iter().map(|p| Param {
+                                name: p.name,
+                                ty: lower_type(p.ty),
+                                contract: p.contract.map(build_expr),
+                                default: p.default.map(build_expr),
+                            }).collect();
+                            let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
+                            let body = build_block(body);
+                            Function {
+                                name,
+                                generics,
+                                generic_contracts: generic_contracts.into_iter().map(|opt| opt.map(build_expr)).collect(),
+                                params,
+                                ret_type,
+                                body,
+                                module_name: module_name.to_string(),
+                                is_pub,
+                            }
+                        }
+                        _ => panic!("Expected function inside impl block"),
+                    }
+                }).collect();
+                let lowered_for_types = for_types.into_iter().map(lower_type).collect();
+                impls.push(ImplDef {
+                    trait_name,
+                    for_types: lowered_for_types,
+                    methods: lowered_methods,
+                    module_name: module_name.to_string(),
+                });
+            }
             _ => {}
         }
     }
-    Program { structs, functions, extern_functions, imports: std::collections::HashMap::new() }
+    Program { structs, functions, extern_functions, traits, impls, imports: std::collections::HashMap::new() }
 }
 
 fn lower_type(ty: crate::parser::Type) -> HirType {
@@ -303,6 +387,8 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
         crate::parser::Statement::StructDef { .. }
         | crate::parser::Statement::Function { .. }
         | crate::parser::Statement::ExternFunction { .. }
+        | crate::parser::Statement::TraitDef { .. }
+        | crate::parser::Statement::ImplDef { .. }
         | crate::parser::Statement::Import(_) => {
             panic!("Nested items not supported in HIR builder");
         }
@@ -328,6 +414,14 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
         crate::parser::Expr::Call { name, type_args, args } => Expr::Call {
             name,
             type_args: type_args.into_iter().map(lower_type).collect(),
+            args: args.into_iter().map(|arg| CallArg {
+                name: arg.name,
+                value: build_expr(arg.value),
+            }).collect(),
+        },
+        crate::parser::Expr::MethodCall { expr, method, args } => Expr::MethodCall {
+            expr: Box::new(build_expr(*expr)),
+            method,
             args: args.into_iter().map(|arg| CallArg {
                 name: arg.name,
                 value: build_expr(arg.value),

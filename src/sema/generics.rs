@@ -137,6 +137,14 @@ pub fn substitute_expr<'a>(
                 value: substitute_expr(a.value, mapping),
             }).collect(),
         },
+        crate::hir::Expr::MethodCall { expr: sub, method, args } => crate::hir::Expr::MethodCall {
+            expr: Box::new(substitute_expr(*sub, mapping)),
+            method,
+            args: args.into_iter().map(|a| crate::hir::CallArg {
+                name: a.name,
+                value: substitute_expr(a.value, mapping),
+            }).collect(),
+        },
         crate::hir::Expr::As { expr, ty } => crate::hir::Expr::As {
             expr: Box::new(substitute_expr(*expr, mapping)),
             ty: substitute_type(&ty, mapping),
@@ -460,6 +468,20 @@ fn subst_loop_var_in_expr_with_var<'a>(
                 args: new_args,
             })
         }
+        crate::hir::Expr::MethodCall { expr: sub, method, args } => {
+            let mut new_args = Vec::new();
+            for a in args {
+                new_args.push(crate::hir::CallArg {
+                    name: a.name,
+                    value: subst_loop_var_in_expr_with_var(a.value, var_name, var_val, others_len)?,
+                });
+            }
+            Ok(crate::hir::Expr::MethodCall {
+                expr: Box::new(subst_loop_var_in_expr_with_var(*sub, var_name, var_val, others_len)?),
+                method,
+                args: new_args,
+            })
+        }
         crate::hir::Expr::As { expr, ty } => {
             Ok(crate::hir::Expr::As {
                 expr: Box::new(subst_loop_var_in_expr_with_var(*expr, var_name, var_val, others_len)?),
@@ -625,6 +647,20 @@ fn subst_loop_var_in_expr<'a>(
             Ok(crate::hir::Expr::Call {
                 name,
                 type_args,
+                args: new_args,
+            })
+        }
+        crate::hir::Expr::MethodCall { expr: sub, method, args } => {
+            let mut new_args = Vec::new();
+            for a in args {
+                new_args.push(crate::hir::CallArg {
+                    name: a.name,
+                    value: subst_loop_var_in_expr(a.value, others_len)?,
+                });
+            }
+            Ok(crate::hir::Expr::MethodCall {
+                expr: Box::new(subst_loop_var_in_expr(*sub, others_len)?),
+                method,
                 args: new_args,
             })
         }
