@@ -1,0 +1,6 @@
+fn main() -> i64 {
+    let mut a = 42;
+    let b = &a;
+    a = 100;
+    return *b;
+}

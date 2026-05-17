@@ -1,0 +1,9 @@
+fn get_local_ref() -> &i64 {
+    let x = 42;
+    return &x;
+}
+
+fn main() -> i64 {
+    let r = get_local_ref();
+    return *r;
+}
