@@ -256,7 +256,10 @@ impl<'ctx> Codegen<'ctx> {
                     compiled_args.push(val.into());
                 }
                 let call_val = self.builder.build_call(fn_val, &compiled_args, "call_tmp").unwrap();
-                call_val.try_as_basic_value().left().expect("Expected function call to return a value")
+                match call_val.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(val) => val,
+                    inkwell::values::ValueKind::Instruction(_) => panic!("Expected function call to return a value"),
+                }
             }
             mir::Rvalue::As(op, dest_ty) => {
                 let val = self.compile_operand(op, var_ptrs, param_ptrs, vars, params);
