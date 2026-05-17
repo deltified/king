@@ -60,9 +60,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lexer::{Lexer, Token};
+    use lexer::Lexer;
     use parser::{Program, Statement, Param, Expr, BinOp};
-    use inkwell::context::Context;
     use std::path::PathBuf;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -133,82 +132,34 @@ mod tests {
     }
 
     #[test]
-    fn test_llvm() {
-        let input = "fn compute(mut x: i64) -> i64 {
-            let mut y = 0;
-            while x > 0 {
-                if x == 5 {
-                    y += 100;
-                } else {
-                    y += x;
-                }
-                x -= 1;
-            }
-            return y;
-        }";
-        
-        let lexer = Lexer::new(input);
-        let tokens = lexer.tokenize();
-        
-        let ast = parser::parse(tokens).expect("Failed to parse");
-        let hir_prog = hir::build(ast);
-        let typed_hir = sema::analyze(hir_prog).expect("Semantic analysis failed");
-        let mir_prog = mir::build(typed_hir);
-        
-        let context = Context::create();
-        let codegen = codegen::Codegen::new(&context, "king_module");
-        let module = codegen.compile_program(mir_prog);
-        
-        // Generate unique file names using PID and an atomic counter to prevent conflicts during parallel test runs.
-        let pid = std::process::id();
-        let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let temp_dir = std::env::temp_dir();
-
-        let ir_path = temp_dir.join(format!("output_{}_{}.ll", pid, counter));
-        let main_c_path = temp_dir.join(format!("main_{}_{}.c", pid, counter));
-        let output_bin_path = temp_dir.join(format!("output_bin_{}_{}", pid, counter));
-
-        // Create the cleanup guard
-        let _cleanup = TempCleanup {
-            paths: vec![ir_path.clone(), main_c_path.clone(), output_bin_path.clone()],
-        };
-
-        // Write the LLVM IR
-        module.print_to_file(&ir_path).expect("Failed to write LLVM IR to file");
-
-        // Write standard C driver code
-        let main_c = r#"
-#include <stdio.h>
-
-extern long long compute(long long x);
-
-int main() {
-    long long result = compute(10);
-    printf("compute(10) = %lld\n", result);
-    return 0;
-}
-"#;
-        std::fs::write(&main_c_path, main_c).expect("Failed to write main.c");
-
-        // Compile output.ll and main.c with clang
-        let compile_status = Command::new("clang")
-            .arg(&ir_path)
-            .arg(&main_c_path)
-            .arg("-o")
-            .arg(&output_bin_path)
-            .status()
-            .expect("Failed to execute clang");
-
-        assert!(compile_status.success(), "Clang compilation failed");
-
-        // Run the compiled executable
-        let run_output = Command::new(&output_bin_path)
-            .output()
-            .expect("Failed to run output binary");
-
-        assert!(run_output.status.success(), "Executable run failed");
-
-        let stdout = String::from_utf8_lossy(&run_output.stdout);
-        assert_eq!(stdout.trim(), "compute(10) = 150");
+    fn test_king_source_files() {
+        let test_cases = vec![
+            ("tests/simple.king", 42),
+            ("tests/arithmetic.king", 50),
+            ("tests/loop.king", 55),
+        ];
+        for (source_file, expected_ret) in test_cases {
+            let pid = std::process::id();
+            let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let temp_dir = std::env::temp_dir();
+            let ir_path = temp_dir.join(format!("output_{}_{}.ll", pid, counter));
+            let output_bin_path = temp_dir.join(format!("output_bin_{}_{}", pid, counter));
+            let _cleanup = TempCleanup {
+                paths: vec![ir_path.clone(), output_bin_path.clone()],
+            };
+            compile_file(source_file, ir_path.to_str().unwrap()).expect("Compilation failed");
+            let compile_status = Command::new("clang")
+                .arg(&ir_path)
+                .arg("-o")
+                .arg(&output_bin_path)
+                .status()
+                .expect("Failed to execute clang");
+            assert!(compile_status.success(), "Clang compilation failed");
+            let run_output = Command::new(&output_bin_path)
+                .status()
+                .expect("Failed to run output binary");
+            let exit_code = run_output.code().expect("Process terminated by signal");
+            assert_eq!(exit_code, expected_ret);
+        }
     }
-    
+}
