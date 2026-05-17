@@ -1,14 +1,32 @@
 fn main() -> i64 {
-    let mut score = 10;
+    let mut score = 5;
     
     comptime {
-        let x = 42;
-        let y = x + 8;
-        if y == 50 {
-            // verified at compile-time!
+        let x = 10;
+        let mut sum = 0;
+        let mut i = 1;
+        
+        while i <= 5 {
+            sum = sum + i;
+            i = i + 1;
+        }
+        
+        if sum == 15 {
+            // Loop and arithmetic verified successfully at compile time!
+        }
+        
+        let t1 = @typeof(x);
+        if t1 == i64 {
+            // Introspection verified at compile time!
+        }
+        
+        let y = 3.14;
+        let t2 = @typeof(y);
+        if t2 is type {
+            // type type validation verified at compile time!
         }
     }
     
-    score = score + 32;
+    score = score + 37;
     return score;
 }

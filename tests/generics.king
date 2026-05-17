@@ -1,3 +1,8 @@
+struct Point {
+    x: i64,
+    y: i64,
+}
+
 fn identity<T: type>(x: T) -> T {
     return x;
 }
@@ -6,16 +11,45 @@ fn add_one<T: type>(x: T) -> T {
     return x + 1;
 }
 
+fn sum_values<T: type, U: type>(x: T, y: U) -> i64 {
+    return (x as i64) + (y as i64);
+}
+
+fn deref_identity<T: type>(x: &T) -> T {
+    return *x;
+}
+
+fn get_x<T: type>(p: &T) -> i64 {
+    return (*p).x;
+}
+
 fn main() -> i64 {
     let a = identity<i64>(42);
     let b = add_one<i64>(9);
+    let c = sum_values<i64, i64>(15, 25);
+    
+    let x_val = 100;
+    let d = deref_identity<i64>(&x_val);
+    
+    let p = Point { x: 77, y: 88 };
+    let e = get_x<Point>(&p);
     
     let mut score = 0;
     if a == 42 {
-        score = score + 20;
+        score = score + 10;
     }
     if b == 10 {
-        score = score + 22;
+        score = score + 10;
     }
+    if c == 40 {
+        score = score + 10;
+    }
+    if d == 100 {
+        score = score + 5;
+    }
+    if e == 77 {
+        score = score + 7;
+    }
+    
     return score;
 }
