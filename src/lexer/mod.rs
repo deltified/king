@@ -215,6 +215,7 @@ impl<'a> Lexer<'a> {
             "false" => Token::Bool(false),
             "as" => Token::As,
             "is" => Token::Is,
+            "comptime" => Token::Comptime,
             "break" => Token::Break,
             "continue" => Token::Continue,
             "struct" => Token::Struct,

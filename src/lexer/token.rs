@@ -8,6 +8,7 @@ pub enum Token<'a> {
     Pub,
     Extern,
     Is,
+    Comptime,
     
     If,
     Else,

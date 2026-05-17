@@ -145,6 +145,30 @@ impl<'a> Parser<'a> {
                     Some(Token::Ident(name)) => name,
                     found => return Err(ParseError::ExpectedIdentifier { found }),
                 };
+                let mut generics = Vec::new();
+                if self.peek() == Some(&Token::LessThan) {
+                    self.advance(); // consume '<'
+                    while self.peek().is_some() && self.peek() != Some(&Token::GreaterThan) {
+                        let gen_name = match self.advance() {
+                            Some(Token::Ident(n)) => n,
+                            found => return Err(ParseError::ExpectedIdentifier { found }),
+                        };
+                        if self.peek() == Some(&Token::Colon) {
+                            self.advance(); // consume ':'
+                            match self.advance() {
+                                Some(Token::Ident("type")) => {}
+                                found => return Err(ParseError::UnexpectedToken { expected: "type", found }),
+                            }
+                        }
+                        generics.push(gen_name);
+                        if self.peek() == Some(&Token::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.consume(Token::GreaterThan, ">")?;
+                }
                 let params = self.parse_fn_params()?;
                 let ret_type = if self.peek() == Some(&Token::Arrow) {
                     self.advance();
@@ -158,7 +182,17 @@ impl<'a> Parser<'a> {
                     body.push(self.parse_statement()?);
                 }
                 self.consume(Token::RBrace, "}")?;
-                Ok(Statement::Function { name, params, ret_type, body, is_pub })
+                Ok(Statement::Function { name, generics, params, ret_type, body, is_pub })
+            }
+            Some(Token::Comptime) => {
+                self.advance(); // consume 'comptime'
+                self.consume(Token::LBrace, "{")?;
+                let mut body = Vec::new();
+                while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                    body.push(self.parse_statement()?);
+                }
+                self.consume(Token::RBrace, "}")?;
+                Ok(Statement::Comptime(body))
             }
             Some(Token::Extern) => {
                 self.advance();
@@ -467,6 +501,42 @@ impl<'a> Parser<'a> {
                     Box::leak(joined.into_boxed_str())
                 };
 
+                let mut type_args = Vec::new();
+                if self.peek() == Some(&Token::LessThan) {
+                    let mut temp_pos = self.pos + 1;
+                    let mut depth = 1;
+                    let mut found_call = false;
+                    while temp_pos < self.tokens.len() {
+                        match &self.tokens[temp_pos] {
+                            Token::LessThan => depth += 1,
+                            Token::GreaterThan => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    if temp_pos + 1 < self.tokens.len() && self.tokens[temp_pos + 1] == Token::LParen {
+                                        found_call = true;
+                                    }
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        temp_pos += 1;
+                    }
+
+                    if found_call {
+                        self.advance(); // consume '<'
+                        while self.peek().is_some() && self.peek() != Some(&Token::GreaterThan) {
+                            type_args.push(self.parse_type()?);
+                            if self.peek() == Some(&Token::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.consume(Token::GreaterThan, ">")?;
+                    }
+                }
+
                 if self.peek() == Some(&Token::LParen) {
                     self.advance(); // consume '('
                     let mut args = Vec::new();
@@ -481,7 +551,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     self.consume(Token::RParen, ")")?;
-                    Ok(Expr::Call { name: full_name, args })
+                    Ok(Expr::Call { name: full_name, type_args, args })
                 } else if self.struct_literal_allowed && self.peek() == Some(&Token::LBrace) {
                     self.advance(); // consume '{'
                     let mut fields = Vec::new();
