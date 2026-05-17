@@ -170,8 +170,8 @@ pub struct FunctionMeta<'a> {
 }
 
 pub fn mangle_name(module_name: &str, name: &str) -> &'static str {
-    if name == "main" {
-        "main"
+    if name == "main" || name == "puts" {
+        if name == "main" { "main" } else { "puts" }
     } else {
         let mangled = format!("{}__{}", module_name.replace("::", "_"), name);
         Box::leak(mangled.into_boxed_str())
@@ -192,7 +192,7 @@ pub struct SemaContext<'a> {
 
 impl<'a> SemaContext<'a> {
     pub fn new() -> Self {
-        Self {
+        let mut ctx = Self {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             structs: HashMap::new(),
@@ -202,7 +202,16 @@ impl<'a> SemaContext<'a> {
             all_structs: Vec::new(),
             all_functions: Vec::new(),
             current_module: String::new(),
-        }
+        };
+        ctx.functions.insert("puts", (vec![Type::Ref { is_mut: false, ty: Box::new(Type::Str) }], Type::I64));
+        ctx.all_functions.push(FunctionMeta {
+            original_name: "puts",
+            module_name: "main".to_string(),
+            is_pub: true,
+            param_types: vec![Type::Ref { is_mut: false, ty: Box::new(Type::Str) }],
+            ret_type: Type::I64,
+        });
+        ctx
     }
 
     pub fn push_scope(&mut self) {
@@ -275,6 +284,11 @@ impl<'a> SemaContext<'a> {
     }
 
     pub fn resolve_function(&self, name: &str) -> Result<&FunctionMeta<'a>, String> {
+        if name == "puts" {
+            if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == "puts") {
+                return Ok(meta);
+            }
+        }
         if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == name && f.module_name == self.current_module) {
             return Ok(meta);
         }
