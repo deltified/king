@@ -79,6 +79,38 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_fn_params(&mut self) -> Result<Vec<Param<'a>>, ParseError<'a>> {
+        self.consume(Token::LParen, "(")?;
+        let mut params = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            loop {
+                let _is_param_mut = if self.peek() == Some(&Token::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let param_name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                self.consume(Token::Colon, ":")?;
+                let param_ty = self.parse_type()?;
+                params.push(Param { name: param_name, ty: param_ty });
+                if self.peek() == Some(&Token::Comma) {
+                    self.advance();
+                    if self.peek() == Some(&Token::RParen) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        self.consume(Token::RParen, ")")?;
+        Ok(params)
+    }
+
     pub fn parse(&mut self) -> Result<Program<'a>, ParseError<'a>> {
         let mut statements = Vec::new();
         while self.peek().is_some() {
@@ -112,34 +144,7 @@ impl<'a> Parser<'a> {
                     Some(Token::Ident(name)) => name,
                     found => return Err(ParseError::ExpectedIdentifier { found }),
                 };
-                self.consume(Token::LParen, "(")?;
-                let mut params = Vec::new();
-                if self.peek() != Some(&Token::RParen) {
-                    loop {
-                        let _is_param_mut = if self.peek() == Some(&Token::Mut) {
-                            self.advance();
-                            true
-                        } else {
-                            false
-                        };
-                        let param_name = match self.advance() {
-                            Some(Token::Ident(name)) => name,
-                            found => return Err(ParseError::ExpectedIdentifier { found }),
-                        };
-                        self.consume(Token::Colon, ":")?;
-                        let param_ty = self.parse_type()?;
-                        params.push(Param { name: param_name, ty: param_ty });
-                        if self.peek() == Some(&Token::Comma) {
-                            self.advance();
-                            if self.peek() == Some(&Token::RParen) {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                self.consume(Token::RParen, ")")?;
+                let params = self.parse_fn_params()?;
                 let ret_type = if self.peek() == Some(&Token::Arrow) {
                     self.advance();
                     Some(self.parse_type()?)
@@ -153,6 +158,23 @@ impl<'a> Parser<'a> {
                 }
                 self.consume(Token::RBrace, "}")?;
                 Ok(Statement::Function { name, params, ret_type, body, is_pub })
+            }
+            Some(Token::Extern) => {
+                self.advance();
+                self.consume(Token::Fn, "fn")?;
+                let name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                let params = self.parse_fn_params()?;
+                let ret_type = if self.peek() == Some(&Token::Arrow) {
+                    self.advance();
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                self.consume(Token::Semi, ";")?;
+                Ok(Statement::ExternFunction { name, params, ret_type })
             }
             Some(Token::Return) => {
                 self.advance();

@@ -6,6 +6,7 @@ pub enum Token<'a> {
     Mut,
     Import,
     Pub,
+    Extern,
     
     If,
     Else,

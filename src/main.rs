@@ -97,12 +97,14 @@ fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
     
     let mut hir_structs = Vec::new();
     let mut hir_functions = Vec::new();
+    let mut hir_extern_functions = Vec::new();
     let mut imports_map = std::collections::HashMap::new();
     
     for (mod_name, ast, imports) in modules {
         let hir_prog = hir::build(ast, &mod_name);
         hir_structs.extend(hir_prog.structs);
         hir_functions.extend(hir_prog.functions);
+        hir_extern_functions.extend(hir_prog.extern_functions);
         
         let imported_names: Vec<String> = imports.into_iter().map(|imp| imp.join("::")).collect();
         imports_map.insert(mod_name, imported_names);
@@ -111,6 +113,7 @@ fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
     let hir_prog = hir::Program {
         structs: hir_structs,
         functions: hir_functions,
+        extern_functions: hir_extern_functions,
         imports: imports_map,
     };
     

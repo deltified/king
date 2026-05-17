@@ -5,6 +5,7 @@ pub mod ast {
     pub struct Program<'a> {
         pub structs: Vec<StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
+        pub extern_functions: Vec<ExternFunction<'a>>,
         pub imports: std::collections::HashMap<String, Vec<String>>,
     }
 
@@ -57,6 +58,13 @@ pub mod ast {
         pub body: Block<'a>,
         pub module_name: String,
         pub is_pub: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ExternFunction<'a> {
+        pub name: &'a str,
+        pub params: Vec<Param<'a>>,
+        pub ret_type: HirType,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +149,8 @@ pub use ast::*;
 pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Program<'a> {
     let mut structs = Vec::new();
     let mut functions = Vec::new();
+    let mut extern_functions = Vec::new();
+
     for stmt in program.statements {
         match stmt {
             crate::parser::Statement::Function { name, params, ret_type, body, is_pub } => {
@@ -159,6 +169,18 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                     is_pub,
                 });
             }
+            crate::parser::Statement::ExternFunction { name, params, ret_type } => {
+                let params = params.into_iter().map(|p| Param {
+                    name: p.name,
+                    ty: lower_type(p.ty),
+                }).collect();
+                let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
+                extern_functions.push(ExternFunction {
+                    name,
+                    params,
+                    ret_type,
+                });
+            }
             crate::parser::Statement::StructDef { name, fields, is_pub } => {
                 let fields = fields.into_iter().map(|f| FieldDef {
                     name: f.name,
@@ -174,7 +196,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
             _ => {}
         }
     }
-    Program { structs, functions, imports: std::collections::HashMap::new() }
+    Program { structs, functions, extern_functions, imports: std::collections::HashMap::new() }
 }
 
 fn lower_type(ty: crate::parser::Type) -> HirType {
@@ -231,6 +253,7 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
         crate::parser::Statement::Continue => Statement::Continue,
         crate::parser::Statement::StructDef { .. }
         | crate::parser::Statement::Function { .. }
+        | crate::parser::Statement::ExternFunction { .. }
         | crate::parser::Statement::Import(_) => {
             panic!("Nested items not supported in HIR builder");
         }

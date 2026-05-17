@@ -208,6 +208,7 @@ impl<'a> Lexer<'a> {
             "struct" => Token::Struct,
             "import" => Token::Import,
             "pub" => Token::Pub,
+            "extern" => Token::Extern,
             _ => Token::Ident(text),
         }
     }
