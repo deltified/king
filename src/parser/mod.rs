@@ -448,6 +448,7 @@ impl<'a> Parser<'a> {
             Some(Token::Int(val)) => Ok(Expr::Int(val)),
             Some(Token::Float(val)) => Ok(Expr::Float(val)),
             Some(Token::Bool(val)) => Ok(Expr::Bool(val)),
+            Some(Token::Str(val)) => Ok(Expr::Str(val)),
             Some(Token::Bang) => {
                 let expr = self.parse_primary()?;
                 Ok(Expr::Unary { op: UnOp::Not, expr: Box::new(expr) })

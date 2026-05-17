@@ -81,6 +81,7 @@ pub enum Expr<'a> {
     Int(i64),
     Float(f64),
     Bool(bool),
+    Str(String),
     Binary {
         op: BinOp,
         lhs: Box<Expr<'a>>,
