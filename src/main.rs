@@ -4,6 +4,7 @@ mod hir;
 mod sema;
 mod mir;
 mod codegen;
+mod analysis;
 
 fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
     let input = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
@@ -13,6 +14,7 @@ fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
     let hir_prog = hir::build(ast);
     let typed_hir = sema::analyze(hir_prog)?;
     let mir_prog = mir::build(typed_hir);
+    analysis::check_program(&mir_prog)?;
     let context = inkwell::context::Context::create();
     let codegen = codegen::Codegen::new(&context, "king_module");
     let module = codegen.compile_program(mir_prog);
