@@ -5,121 +5,25 @@ mod sema;
 mod mir;
 mod codegen;
 mod analysis;
-
-fn load_all_files(
-    file_path: &std::path::Path,
-    module_name: &str,
-    loaded_files: &mut std::collections::HashMap<std::path::PathBuf, String>,
-    compilation_stack: &mut Vec<std::path::PathBuf>,
-    modules: &mut Vec<(String, parser::Program<'static>, Vec<Vec<String>>)>,
-) -> Result<(), String> {
-    let canonical = file_path.canonicalize().map_err(|e| format!("Failed to resolve path {:?}: {}", file_path, e))?;
-    
-    if compilation_stack.contains(&canonical) {
-        return Err(format!("Circular import detected: {:?}", compilation_stack));
-    }
-    
-    if loaded_files.contains_key(&canonical) {
-        return Ok(());
-    }
-    
-    let content = std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read file {:?}: {}", canonical, e))?;
-    // We leak the content to get 'static lifetime! This is extremely safe and fast for compilers.
-    let content_ref: &'static str = Box::leak(content.clone().into_boxed_str());
-    loaded_files.insert(canonical.clone(), content);
-    
-    compilation_stack.push(canonical.clone());
-    
-    let lexer = lexer::Lexer::new(content_ref);
-    let tokens = lexer.tokenize();
-    let ast = parser::parse(tokens).map_err(|e| format!("Parse error in {:?}: {:?}", canonical, e))?;
-    
-    // Extract imports and filter them from AST statements
-    let mut imports = Vec::new();
-    let mut clean_statements = Vec::new();
-    for stmt in ast.statements {
-        if let parser::Statement::Import(path_segments) = stmt {
-            let segments: Vec<String> = path_segments.into_iter().map(|s| s.to_string()).collect();
-            imports.push(segments);
-        } else {
-            clean_statements.push(stmt);
-        }
-    }
-    
-    // Process imports first to strictly disallow circular imports and load dependencies
-    let parent_dir = canonical.parent().unwrap_or_else(|| std::path::Path::new("."));
-    for imp in &imports {
-        let mut resolved_path = std::path::PathBuf::new();
-        
-        if imp.first().map(|s| s.as_str()) == Some("std") {
-            // Resolve std:: relative to the current working directory (project root)
-            if let Ok(cwd) = std::env::current_dir() {
-                resolved_path = cwd.to_path_buf();
-                for segment in imp {
-                    resolved_path.push(segment);
-                }
-            }
-        } else {
-            // Resolve import path relative to the importing file
-            resolved_path = parent_dir.to_path_buf();
-            for segment in imp {
-                resolved_path.push(segment);
-            }
-        }
-        resolved_path.set_extension("king");
-        
-        if !resolved_path.exists() {
-            // Fall back to resolving relative to the main file's parent directory (first stack element)
-            if let Some(root_file) = compilation_stack.first() {
-                if let Some(root_dir) = root_file.parent() {
-                    let mut fallback = root_dir.to_path_buf();
-                    for segment in imp {
-                        fallback.push(segment);
-                    }
-                    fallback.set_extension("king");
-                    if fallback.exists() {
-                        resolved_path = fallback;
-                    }
-                }
-            }
-        }
-        
-        let imp_module_name = imp.join("::");
-        load_all_files(&resolved_path, &imp_module_name, loaded_files, compilation_stack, modules)?;
-    }
-    
-    compilation_stack.pop();
-    
-    modules.push((module_name.to_string(), parser::Program { statements: clean_statements }, imports));
-    Ok(())
-}
+mod resolver;
 
 fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
-    let mut loaded_files = std::collections::HashMap::new();
-    let mut compilation_stack = Vec::new();
-    let mut modules = Vec::new();
-    
-    load_all_files(
-        std::path::Path::new(input_path),
-        "main",
-        &mut loaded_files,
-        &mut compilation_stack,
-        &mut modules,
-    )?;
+    let mut resolver = resolver::Resolver::new();
+    resolver.resolve(std::path::Path::new(input_path))?;
     
     let mut hir_structs = Vec::new();
     let mut hir_functions = Vec::new();
     let mut hir_extern_functions = Vec::new();
     let mut imports_map = std::collections::HashMap::new();
     
-    for (mod_name, ast, imports) in modules {
-        let hir_prog = hir::build(ast, &mod_name);
+    for module in resolver.modules {
+        let hir_prog = hir::build(module.ast, &module.name);
         hir_structs.extend(hir_prog.structs);
         hir_functions.extend(hir_prog.functions);
         hir_extern_functions.extend(hir_prog.extern_functions);
         
-        let imported_names: Vec<String> = imports.into_iter().map(|imp| imp.join("::")).collect();
-        imports_map.insert(mod_name, imported_names);
+        let imported_names: Vec<String> = module.imports.into_iter().map(|imp| imp.join("::")).collect();
+        imports_map.insert(module.name, imported_names);
     }
     
     let hir_prog = hir::Program {
