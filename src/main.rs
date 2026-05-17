@@ -25,7 +25,7 @@ fn main() {
     if args.len() < 2 {
         println!("King Compiler");
         println!("To run the compiler test suite, execute:");
-        println!("  PATH=\"/opt/homebrew/opt/llvm/bin:$PATH\" cargo test");
+        println!("  PATH=\"/opt/homebrew/opt/llvm/bin:$PATH\" cargo test -- --nocapture");
         return;
     }
     let mut input_path = None;
