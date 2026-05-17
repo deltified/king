@@ -30,6 +30,8 @@ pub enum Token<'a> {
     Break,
     Continue,
     Struct,
+    Trait,
+    Impl,
     
     Assign, 
     Plus,   
