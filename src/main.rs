@@ -2,6 +2,7 @@ mod lexer;
 mod parser;
 mod hir;
 mod sema;
+mod mir;
 
 use lexer::Lexer;
 use lexer::Token;
