@@ -2,12 +2,16 @@ pub mod ast {
     use crate::parser::{BinOp, UnOp};
     use crate::hir::HirType;
 
-    #[derive(Debug, Clone, PartialEq, Eq, Copy)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Type {
         I64,
         F64,
         Bool,
         Void,
+        Ref {
+            is_mut: bool,
+            ty: Box<Type>,
+        },
     }
 
     impl From<HirType> for Type {
@@ -17,6 +21,10 @@ pub mod ast {
                 HirType::F64 => Type::F64,
                 HirType::Bool => Type::Bool,
                 HirType::Void => Type::Void,
+                HirType::Ref { is_mut, ty } => Type::Ref {
+                    is_mut,
+                    ty: Box::new(Type::from(*ty)),
+                },
             }
         }
     }
@@ -54,6 +62,7 @@ pub mod ast {
         },
         Assign {
             name: &'a str,
+            is_deref: bool,
             value: TypedExpr<'a>,
         },
         Expr(TypedExpr<'a>),
@@ -100,6 +109,11 @@ pub mod ast {
             expr: Box<TypedExpr<'a>>,
             ty: Type,
         },
+        Borrow {
+            is_mut: bool,
+            expr: Box<TypedExpr<'a>>,
+        },
+        Deref(Box<TypedExpr<'a>>),
     }
 }
 
@@ -141,7 +155,7 @@ impl<'a> SemaContext<'a> {
     pub fn lookup_var(&self, name: &str) -> Option<(Type, bool)> {
         for scope in self.scopes.iter().rev() {
             if let Some(info) = scope.get(name) {
-                return Some(*info);
+                return Some(info.clone());
             }
         }
         None
@@ -152,19 +166,19 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
     let mut ctx = SemaContext::new();
     
     for f in &program.functions {
-        let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty)).collect();
-        ctx.functions.insert(f.name, (param_tys, Type::from(f.ret_type)));
+        let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty.clone())).collect();
+        ctx.functions.insert(f.name, (param_tys, Type::from(f.ret_type.clone())));
     }
 
     let mut functions = Vec::new();
     for f in program.functions {
         ctx.push_scope();
-        ctx.current_ret_type = Some(Type::from(f.ret_type));
+        ctx.current_ret_type = Some(Type::from(f.ret_type.clone()));
 
         let mut params = Vec::new();
         for p in &f.params {
-            let ty = Type::from(p.ty);
-            ctx.declare_var(p.name, ty, true); // Parameters are treated as mutable in their local scope bindings if prefixed, we default to mutable inside backend to allow reassignment
+            let ty = Type::from(p.ty.clone());
+            ctx.declare_var(p.name, ty.clone(), true);
             params.push(Param { name: p.name, ty });
         }
 
@@ -175,7 +189,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
         functions.push(Function {
             name: f.name,
             params,
-            ret_type: Type::from(f.ret_type),
+            ret_type: Type::from(f.ret_type.clone()),
             body,
         });
     }
@@ -197,23 +211,42 @@ fn check_statement<'a>(ctx: &mut SemaContext<'a>, stmt: crate::hir::Statement<'a
     match stmt {
         crate::hir::Statement::Let { name, is_mut, value } => {
             let typed_value = check_expr(ctx, value)?;
-            ctx.declare_var(name, typed_value.ty, is_mut);
+            ctx.declare_var(name, typed_value.ty.clone(), is_mut);
             Ok(Statement::Let { name, is_mut, value: typed_value })
         }
-        crate::hir::Statement::Assign { name, value } => {
+        crate::hir::Statement::Assign { name, is_deref, value } => {
             let (expected_ty, is_mut) = ctx.lookup_var(name)
                 .ok_ok_or_else(|| format!("Variable '{}' not declared in scope", name))?;
-            if !is_mut {
-                return Err(format!("Cannot reassign immutable variable '{}'", name));
-            }
             let typed_value = check_expr(ctx, value)?;
-            if typed_value.ty != expected_ty {
-                return Err(format!(
-                    "Type mismatch in assignment for variable '{}': expected {:?}, found {:?}",
-                    name, expected_ty, typed_value.ty
-                ));
+            if is_deref {
+                match expected_ty {
+                    Type::Ref { is_mut: ref_is_mut, ty: ref_inner_ty } => {
+                        if !ref_is_mut {
+                            return Err(format!("Cannot assign to immutable reference '{}'", name));
+                        }
+                        if typed_value.ty != *ref_inner_ty {
+                            return Err(format!(
+                                "Type mismatch in dereference assignment for variable '{}': expected {:?}, found {:?}",
+                                name, ref_inner_ty, typed_value.ty
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(format!("Cannot dereference non-reference variable '{}' of type {:?}", name, expected_ty));
+                    }
+                }
+            } else {
+                if !is_mut {
+                    return Err(format!("Cannot reassign immutable variable '{}'", name));
+                }
+                if typed_value.ty != expected_ty {
+                    return Err(format!(
+                        "Type mismatch in assignment for variable '{}': expected {:?}, found {:?}",
+                        name, expected_ty, typed_value.ty
+                    ));
+                }
             }
-            Ok(Statement::Assign { name, value: typed_value })
+            Ok(Statement::Assign { name, is_deref, value: typed_value })
         }
         crate::hir::Statement::Expr(expr) => {
             let typed_expr = check_expr(ctx, expr)?;
@@ -221,8 +254,8 @@ fn check_statement<'a>(ctx: &mut SemaContext<'a>, stmt: crate::hir::Statement<'a
         }
         crate::hir::Statement::Return(opt_expr) => {
             let opt_typed_expr = opt_expr.map(|e| check_expr(ctx, e)).transpose()?;
-            let found_ty = opt_typed_expr.as_ref().map(|e| e.ty).unwrap_or(Type::Void);
-            let expected_ty = ctx.current_ret_type.unwrap_or(Type::Void);
+            let found_ty = opt_typed_expr.as_ref().map(|e| e.ty.clone()).unwrap_or(Type::Void);
+            let expected_ty = ctx.current_ret_type.clone().unwrap_or(Type::Void);
             if found_ty != expected_ty {
                 return Err(format!(
                     "Return type mismatch: expected {:?}, found {:?}",
@@ -299,7 +332,7 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                     if typed_expr.ty != Type::I64 && typed_expr.ty != Type::F64 {
                         return Err(format!("Unary '-' operator cannot be applied to {:?}", typed_expr.ty));
                     }
-                    typed_expr.ty
+                    typed_expr.ty.clone()
                 }
             };
             Ok(TypedExpr {
@@ -360,7 +393,7 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             if args.len() != param_tys.len() {
                 return Err(format!("Function '{}' expects {} arguments, found {}", name, param_tys.len(), args.len()));
             }
-
+ 
             let mut typed_args = Vec::new();
             for (arg, expected_ty) in args.into_iter().zip(param_tys) {
                 let typed_arg = check_expr(ctx, arg)?;
@@ -369,7 +402,7 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                 }
                 typed_args.push(typed_arg);
             }
-
+ 
             Ok(TypedExpr {
                 kind: ExprKind::Call { name, args: typed_args },
                 ty: ret_ty,
@@ -380,31 +413,73 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             let dest_ty = Type::from(ty);
             
             // Check casting validity
-            let valid = match (typed_expr.ty, dest_ty) {
+            let valid = match (&typed_expr.ty, &dest_ty) {
                 (Type::I64, Type::F64) | (Type::F64, Type::I64) => true,
                 (t1, t2) if t1 == t2 => true,
                 _ => false,
             };
-
+ 
             if !valid {
                 return Err(format!("Cannot cast expression from {:?} to {:?}", typed_expr.ty, dest_ty));
             }
-
+ 
             Ok(TypedExpr {
                 kind: ExprKind::As {
                     expr: Box::new(typed_expr),
-                    ty: dest_ty,
+                    ty: dest_ty.clone(),
                 },
                 ty: dest_ty,
             })
         }
+        crate::hir::Expr::Borrow { is_mut, expr } => {
+            let typed_expr = check_expr(ctx, *expr)?;
+            if is_mut {
+                match &typed_expr.kind {
+                    ExprKind::Ident(name) => {
+                        let (_, var_is_mut) = ctx.lookup_var(name)
+                            .ok_ok_or_else(|| format!("Variable '{}' not found in scope", name))?;
+                        if !var_is_mut {
+                            return Err(format!("Cannot borrow immutable variable '{}' as mutable", name));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            
+            let ref_ty = Type::Ref {
+                is_mut,
+                ty: Box::new(typed_expr.ty.clone()),
+            };
+            
+            Ok(TypedExpr {
+                kind: ExprKind::Borrow {
+                    is_mut,
+                    expr: Box::new(typed_expr),
+                },
+                ty: ref_ty,
+            })
+        }
+        crate::hir::Expr::Deref(expr) => {
+            let typed_expr = check_expr(ctx, *expr)?;
+            match typed_expr.ty {
+                Type::Ref { ty: inner_ty, .. } => {
+                    Ok(TypedExpr {
+                        kind: ExprKind::Deref(Box::new(typed_expr)),
+                        ty: *inner_ty,
+                    })
+                }
+                other => {
+                    Err(format!("Cannot dereference non-reference type {:?}", other))
+                }
+            }
+        }
     }
 }
-
+ 
 trait OptionExt<T> {
     fn ok_ok_or_else<F: FnOnce() -> String>(self, err: F) -> Result<T, String>;
 }
-
+ 
 impl<T> OptionExt<T> for Option<T> {
     fn ok_ok_or_else<F: FnOnce() -> String>(self, err: F) -> Result<T, String> {
         match self {
