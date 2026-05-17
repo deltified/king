@@ -36,6 +36,8 @@ pub mod ast {
     pub struct StructDef<'a> {
         pub name: &'a str,
         pub fields: Vec<FieldDef<'a>>,
+        pub module_name: String,
+        pub is_pub: bool,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +52,8 @@ pub mod ast {
         pub params: Vec<Param<'a>>,
         pub ret_type: HirType,
         pub body: Block<'a>,
+        pub module_name: String,
+        pub is_pub: bool,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -130,26 +134,38 @@ pub mod ast {
 
 pub use ast::*;
 
-pub fn build<'a>(program: crate::parser::Program<'a>) -> Program<'a> {
+pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Program<'a> {
     let mut structs = Vec::new();
     let mut functions = Vec::new();
     for stmt in program.statements {
         match stmt {
-            crate::parser::Statement::Function { name, params, ret_type, body } => {
+            crate::parser::Statement::Function { name, params, ret_type, body, is_pub } => {
                 let params = params.into_iter().map(|p| Param {
                     name: p.name,
                     ty: lower_type(p.ty),
                 }).collect();
                 let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
                 let body = build_block(body);
-                functions.push(Function { name, params, ret_type, body });
+                functions.push(Function {
+                    name,
+                    params,
+                    ret_type,
+                    body,
+                    module_name: module_name.to_string(),
+                    is_pub,
+                });
             }
-            crate::parser::Statement::StructDef { name, fields } => {
+            crate::parser::Statement::StructDef { name, fields, is_pub } => {
                 let fields = fields.into_iter().map(|f| FieldDef {
                     name: f.name,
                     ty: lower_type(f.ty),
                 }).collect();
-                structs.push(StructDef { name, fields });
+                structs.push(StructDef {
+                    name,
+                    fields,
+                    module_name: module_name.to_string(),
+                    is_pub,
+                });
             }
             _ => {}
         }
@@ -207,7 +223,9 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
         },
         crate::parser::Statement::Break => Statement::Break,
         crate::parser::Statement::Continue => Statement::Continue,
-        crate::parser::Statement::StructDef { .. } | crate::parser::Statement::Function { .. } => {
+        crate::parser::Statement::StructDef { .. }
+        | crate::parser::Statement::Function { .. }
+        | crate::parser::Statement::Import(_) => {
             panic!("Nested items not supported in HIR builder");
         }
     }
