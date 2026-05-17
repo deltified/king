@@ -5,6 +5,7 @@ pub mod ast {
     pub struct Program<'a> {
         pub structs: Vec<StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
+        pub imports: std::collections::HashMap<String, Vec<String>>,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -170,7 +171,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
             _ => {}
         }
     }
-    Program { structs, functions }
+    Program { structs, functions, imports: std::collections::HashMap::new() }
 }
 
 fn lower_type(ty: crate::parser::Type) -> HirType {
