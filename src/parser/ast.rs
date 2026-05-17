@@ -19,6 +19,18 @@ pub struct Param<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct FieldDef<'a> {
+    pub name: &'a str,
+    pub ty: Type<'a>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FieldInit<'a> {
+    pub name: &'a str,
+    pub value: Expr<'a>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement<'a> {
     Let {
         name: &'a str,
@@ -30,12 +42,21 @@ pub enum Statement<'a> {
         is_deref: bool,
         value: Expr<'a>,
     },
+    AssignField {
+        expr: Expr<'a>,
+        field: &'a str,
+        value: Expr<'a>,
+    },
     Expr(Expr<'a>),
     Function {
         name: &'a str,
         params: Vec<Param<'a>>,
         ret_type: Option<Type<'a>>,
         body: Vec<Statement<'a>>,
+    },
+    StructDef {
+        name: &'a str,
+        fields: Vec<FieldDef<'a>>,
     },
     Return(Option<Expr<'a>>),
     If {
@@ -79,6 +100,14 @@ pub enum Expr<'a> {
         expr: Box<Expr<'a>>,
     },
     Deref(Box<Expr<'a>>),
+    StructLiteral {
+        name: &'a str,
+        fields: Vec<FieldInit<'a>>,
+    },
+    FieldAccess {
+        expr: Box<Expr<'a>>,
+        field: &'a str,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

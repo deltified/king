@@ -224,40 +224,59 @@ impl<'a> Parser<'a> {
                 self.consume(Token::Semi, ";")?;
                 Ok(Statement::Continue)
             }
-            Some(Token::Star) => {
-                if self.pos + 2 < self.tokens.len() {
-                    if let Some(Token::Ident(name)) = self.tokens.get(self.pos + 1) {
-                        if let Some(Token::Assign) = self.tokens.get(self.pos + 2) {
-                            let name_val = *name;
-                            self.advance(); // consume '*'
-                            self.advance(); // consume identifier
-                            self.advance(); // consume '='
-                            
-                            let value = self.parse_expr(0)?;
-                            self.consume(Token::Semi, ";")?;
-                            return Ok(Statement::Assign { name: name_val, is_deref: true, value });
+            Some(Token::Struct) => {
+                self.advance(); // consume 'struct'
+                let name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                self.consume(Token::LBrace, "{")?;
+                let mut fields = Vec::new();
+                if self.peek() != Some(&Token::RBrace) {
+                    loop {
+                        let field_name = match self.advance() {
+                            Some(Token::Ident(name)) => name,
+                            found => return Err(ParseError::ExpectedIdentifier { found }),
+                        };
+                        self.consume(Token::Colon, ":")?;
+                        let field_ty = self.parse_type()?;
+                        fields.push(ast::FieldDef { name: field_name, ty: field_ty });
+                        if self.peek() == Some(&Token::Comma) {
+                            self.advance();
+                            if self.peek() == Some(&Token::RBrace) {
+                                break;
+                            }
+                        } else {
+                            break;
                         }
                     }
                 }
-                let value = self.parse_expr(0)?;
-                self.consume(Token::Semi, ";")?;
-                Ok(Statement::Expr(value))
+                self.consume(Token::RBrace, "}")?;
+                Ok(Statement::StructDef { name, fields })
             }
-            Some(Token::Ident(name)) => {
-                let next = self.tokens.get(self.pos + 1);
-                match next {
+            _ => {
+                let expr = self.parse_expr(0)?;
+                match self.peek() {
                     Some(Token::Assign) => {
-                        let name_val = *name;
-                        self.advance(); // consume identifier
                         self.advance(); // consume '='
-                        
                         let value = self.parse_expr(0)?;
                         self.consume(Token::Semi, ";")?;
-                        Ok(Statement::Assign { name: name_val, is_deref: false, value })
+                        match expr {
+                            Expr::Ident(name) => Ok(Statement::Assign { name, is_deref: false, value }),
+                            Expr::Deref(sub_expr) => {
+                                if let Expr::Ident(name) = *sub_expr {
+                                    Ok(Statement::Assign { name, is_deref: true, value })
+                                } else {
+                                    Err(ParseError::InvalidExpression { found: Some(Token::Assign) })
+                                }
+                            }
+                            Expr::FieldAccess { expr: lhs_expr, field } => {
+                                Ok(Statement::AssignField { expr: *lhs_expr, field, value })
+                            }
+                            _ => Err(ParseError::InvalidExpression { found: Some(Token::Assign) })
+                        }
                     }
-                    Some(Token::PlusEq) | Some(Token::MinusEq) | Some(Token::StarEq) | Some(Token::SlashEq) => {
-                        let name_val = *name;
-                        self.advance(); // consume identifier
+                    Some(tok) if is_assign_op(tok) => {
                         let op_tok = self.advance().unwrap();
                         let op = match op_tok {
                             Token::PlusEq => BinOp::Add,
@@ -271,22 +290,22 @@ impl<'a> Parser<'a> {
                         
                         let desugared_value = Expr::Binary {
                             op,
-                            lhs: Box::new(Expr::Ident(name_val)),
+                            lhs: Box::new(expr.clone()),
                             rhs: Box::new(rhs_expr),
                         };
-                        Ok(Statement::Assign { name: name_val, is_deref: false, value: desugared_value })
+                        match expr {
+                            Expr::Ident(name) => Ok(Statement::Assign { name, is_deref: false, value: desugared_value }),
+                            Expr::FieldAccess { expr: lhs_expr, field } => {
+                                Ok(Statement::AssignField { expr: *lhs_expr, field, value: desugared_value })
+                            }
+                            _ => Err(ParseError::InvalidExpression { found: Some(op_tok) })
+                        }
                     }
                     _ => {
-                        let value = self.parse_expr(0)?;
                         self.consume(Token::Semi, ";")?;
-                        Ok(Statement::Expr(value))
+                        Ok(Statement::Expr(expr))
                     }
                 }
-            }
-            _ => {
-                let value = self.parse_expr(0)?;
-                self.consume(Token::Semi, ";")?;
-                Ok(Statement::Expr(value))
             }
         }
     }
@@ -344,7 +363,7 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
-    fn parse_primary(&mut self) -> Result<Expr<'a>, ParseError<'a>> {
+    fn parse_base_primary(&mut self) -> Result<Expr<'a>, ParseError<'a>> {
         match self.advance() {
             Some(Token::Ident(name)) => {
                 if self.peek() == Some(&Token::LParen) {
@@ -362,6 +381,30 @@ impl<'a> Parser<'a> {
                     }
                     self.consume(Token::RParen, ")")?;
                     Ok(Expr::Call { name, args })
+                } else if self.peek() == Some(&Token::LBrace) {
+                    self.advance(); // consume '{'
+                    let mut fields = Vec::new();
+                    if self.peek() != Some(&Token::RBrace) {
+                        loop {
+                            let field_name = match self.advance() {
+                                Some(Token::Ident(name)) => name,
+                                found => return Err(ParseError::ExpectedIdentifier { found }),
+                            };
+                            self.consume(Token::Colon, ":")?;
+                            let value = self.parse_expr(0)?;
+                            fields.push(ast::FieldInit { name: field_name, value });
+                            if self.peek() == Some(&Token::Comma) {
+                                self.advance();
+                                if self.peek() == Some(&Token::RBrace) {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(Token::RBrace, "}")?;
+                    Ok(Expr::StructLiteral { name, fields })
                 } else {
                     Ok(Expr::Ident(name))
                 }
@@ -399,6 +442,27 @@ impl<'a> Parser<'a> {
             found => Err(ParseError::InvalidExpression { found }),
         }
     }
+
+    fn parse_primary(&mut self) -> Result<Expr<'a>, ParseError<'a>> {
+        let mut expr = self.parse_base_primary()?;
+        while let Some(tok) = self.peek() {
+            match tok {
+                Token::Dot => {
+                    self.advance(); // consume '.'
+                    let field = match self.advance() {
+                        Some(Token::Ident(field)) => field,
+                        found => return Err(ParseError::ExpectedIdentifier { found }),
+                    };
+                    expr = Expr::FieldAccess {
+                        expr: Box::new(expr),
+                        field,
+                    };
+                }
+                _ => break,
+            }
+        }
+        Ok(expr)
+    }
 }
 
 fn op_precedence(op: BinOp) -> u8 {
@@ -414,4 +478,8 @@ fn op_precedence(op: BinOp) -> u8 {
 pub fn parse<'a>(tokens: Vec<Token<'a>>) -> Result<Program<'a>, ParseError<'a>> {
     let mut parser = Parser::new(tokens);
     parser.parse()
+}
+
+fn is_assign_op(tok: &Token) -> bool {
+    matches!(tok, Token::PlusEq | Token::MinusEq | Token::StarEq | Token::SlashEq)
 }
