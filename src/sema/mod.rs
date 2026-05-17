@@ -5,6 +5,7 @@ pub mod ast {
     #[derive(Debug, Clone, PartialEq, Eq, Copy)]
     pub enum Type {
         I64,
+        F64,
         Bool,
         Void,
     }
@@ -13,6 +14,7 @@ pub mod ast {
         fn from(ht: HirType) -> Self {
             match ht {
                 HirType::I64 => Type::I64,
+                HirType::F64 => Type::F64,
                 HirType::Bool => Type::Bool,
                 HirType::Void => Type::Void,
             }
@@ -65,6 +67,8 @@ pub mod ast {
             cond: TypedExpr<'a>,
             body: Block<'a>,
         },
+        Break,
+        Continue,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -77,6 +81,7 @@ pub mod ast {
     pub enum ExprKind<'a> {
         Ident(&'a str),
         Int(i64),
+        Float(f64),
         Bool(bool),
         Binary {
             op: BinOp,
@@ -87,6 +92,14 @@ pub mod ast {
             op: UnOp,
             expr: Box<TypedExpr<'a>>,
         },
+        Call {
+            name: &'a str,
+            args: Vec<TypedExpr<'a>>,
+        },
+        As {
+            expr: Box<TypedExpr<'a>>,
+            ty: Type,
+        },
     }
 }
 
@@ -95,9 +108,10 @@ pub use ast::*;
 use std::collections::HashMap;
 
 pub struct SemaContext<'a> {
-    scopes: Vec<HashMap<&'a str, Type>>,
+    scopes: Vec<HashMap<&'a str, (Type, bool)>>,
     functions: HashMap<&'a str, (Vec<Type>, Type)>,
     current_ret_type: Option<Type>,
+    loop_depth: usize,
 }
 
 impl<'a> SemaContext<'a> {
@@ -106,6 +120,7 @@ impl<'a> SemaContext<'a> {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             current_ret_type: None,
+            loop_depth: 0,
         }
     }
 
@@ -117,16 +132,16 @@ impl<'a> SemaContext<'a> {
         self.scopes.pop();
     }
 
-    pub fn declare_var(&mut self, name: &'a str, ty: Type) {
+    pub fn declare_var(&mut self, name: &'a str, ty: Type, is_mut: bool) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, ty);
+            scope.insert(name, (ty, is_mut));
         }
     }
 
-    pub fn lookup_var(&self, name: &str) -> Option<Type> {
+    pub fn lookup_var(&self, name: &str) -> Option<(Type, bool)> {
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
-                return Some(*ty);
+            if let Some(info) = scope.get(name) {
+                return Some(*info);
             }
         }
         None
@@ -136,7 +151,6 @@ impl<'a> SemaContext<'a> {
 pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, String> {
     let mut ctx = SemaContext::new();
     
-    // Register all function signatures first
     for f in &program.functions {
         let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty)).collect();
         ctx.functions.insert(f.name, (param_tys, Type::from(f.ret_type)));
@@ -150,7 +164,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
         let mut params = Vec::new();
         for p in &f.params {
             let ty = Type::from(p.ty);
-            ctx.declare_var(p.name, ty);
+            ctx.declare_var(p.name, ty, true); // Parameters are treated as mutable in their local scope bindings if prefixed, we default to mutable inside backend to allow reassignment
             params.push(Param { name: p.name, ty });
         }
 
@@ -183,12 +197,15 @@ fn check_statement<'a>(ctx: &mut SemaContext<'a>, stmt: crate::hir::Statement<'a
     match stmt {
         crate::hir::Statement::Let { name, is_mut, value } => {
             let typed_value = check_expr(ctx, value)?;
-            ctx.declare_var(name, typed_value.ty);
+            ctx.declare_var(name, typed_value.ty, is_mut);
             Ok(Statement::Let { name, is_mut, value: typed_value })
         }
         crate::hir::Statement::Assign { name, value } => {
-            let expected_ty = ctx.lookup_var(name)
+            let (expected_ty, is_mut) = ctx.lookup_var(name)
                 .ok_ok_or_else(|| format!("Variable '{}' not declared in scope", name))?;
+            if !is_mut {
+                return Err(format!("Cannot reassign immutable variable '{}'", name));
+            }
             let typed_value = check_expr(ctx, value)?;
             if typed_value.ty != expected_ty {
                 return Err(format!(
@@ -232,8 +249,22 @@ fn check_statement<'a>(ctx: &mut SemaContext<'a>, stmt: crate::hir::Statement<'a
             if typed_cond.ty != Type::Bool {
                 return Err(format!("While loop condition must be a boolean expression, found {:?}", typed_cond.ty));
             }
-            let typed_body = check_block(ctx, body)?;
-            Ok(Statement::While { cond: typed_cond, body: typed_body })
+            ctx.loop_depth += 1;
+            let typed_body = check_block(ctx, body);
+            ctx.loop_depth -= 1;
+            Ok(Statement::While { cond: typed_cond, body: typed_body? })
+        }
+        crate::hir::Statement::Break => {
+            if ctx.loop_depth == 0 {
+                return Err("break statement outside of a loop".to_string());
+            }
+            Ok(Statement::Break)
+        }
+        crate::hir::Statement::Continue => {
+            if ctx.loop_depth == 0 {
+                return Err("continue statement outside of a loop".to_string());
+            }
+            Ok(Statement::Continue)
         }
     }
 }
@@ -241,12 +272,15 @@ fn check_statement<'a>(ctx: &mut SemaContext<'a>, stmt: crate::hir::Statement<'a
 fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Result<TypedExpr<'a>, String> {
     match expr {
         crate::hir::Expr::Ident(name) => {
-            let ty = ctx.lookup_var(name)
+            let (ty, _) = ctx.lookup_var(name)
                 .ok_ok_or_else(|| format!("Variable '{}' not found in scope", name))?;
             Ok(TypedExpr { kind: ExprKind::Ident(name), ty })
         }
         crate::hir::Expr::Int(val) => {
             Ok(TypedExpr { kind: ExprKind::Int(val), ty: Type::I64 })
+        }
+        crate::hir::Expr::Float(val) => {
+            Ok(TypedExpr { kind: ExprKind::Float(val), ty: Type::F64 })
         }
         crate::hir::Expr::Bool(val) => {
             Ok(TypedExpr { kind: ExprKind::Bool(val), ty: Type::Bool })
@@ -262,10 +296,10 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                     Type::Bool
                 }
                 UnOp::Neg => {
-                    if typed_expr.ty != Type::I64 {
+                    if typed_expr.ty != Type::I64 && typed_expr.ty != Type::F64 {
                         return Err(format!("Unary '-' operator cannot be applied to {:?}", typed_expr.ty));
                     }
-                    Type::I64
+                    typed_expr.ty
                 }
             };
             Ok(TypedExpr {
@@ -280,10 +314,13 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             
             let res_ty = match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
-                    if typed_lhs.ty != Type::I64 || typed_rhs.ty != Type::I64 {
-                        return Err(format!("Arithmetic operator {:?} requires I64 operands, found {:?} and {:?}", op, typed_lhs.ty, typed_rhs.ty));
+                    if typed_lhs.ty == Type::I64 && typed_rhs.ty == Type::I64 {
+                        Type::I64
+                    } else if typed_lhs.ty == Type::F64 && typed_rhs.ty == Type::F64 {
+                        Type::F64
+                    } else {
+                        return Err(format!("Arithmetic operator {:?} requires matching I64 or F64 operands, found {:?} and {:?}", op, typed_lhs.ty, typed_rhs.ty));
                     }
-                    Type::I64
                 }
                 BinOp::And | BinOp::Or => {
                     if typed_lhs.ty != Type::Bool || typed_rhs.ty != Type::Bool {
@@ -298,10 +335,12 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                     Type::Bool
                 }
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                    if typed_lhs.ty != Type::I64 || typed_rhs.ty != Type::I64 {
-                        return Err(format!("Relational operator {:?} requires I64 operands, found {:?} and {:?}", op, typed_lhs.ty, typed_rhs.ty));
+                    if (typed_lhs.ty == Type::I64 && typed_rhs.ty == Type::I64) ||
+                       (typed_lhs.ty == Type::F64 && typed_rhs.ty == Type::F64) {
+                        Type::Bool
+                    } else {
+                        return Err(format!("Relational operator {:?} requires matching I64 or F64 operands, found {:?} and {:?}", op, typed_lhs.ty, typed_rhs.ty));
                     }
-                    Type::Bool
                 }
             };
             
@@ -312,6 +351,51 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                     rhs: Box::new(typed_rhs),
                 },
                 ty: res_ty,
+            })
+        }
+        crate::hir::Expr::Call { name, args } => {
+            let (param_tys, ret_ty) = ctx.functions.get(name)
+                .ok_ok_or_else(|| format!("Function '{}' not found in scope", name))?.clone();
+            
+            if args.len() != param_tys.len() {
+                return Err(format!("Function '{}' expects {} arguments, found {}", name, param_tys.len(), args.len()));
+            }
+
+            let mut typed_args = Vec::new();
+            for (arg, expected_ty) in args.into_iter().zip(param_tys) {
+                let typed_arg = check_expr(ctx, arg)?;
+                if typed_arg.ty != expected_ty {
+                    return Err(format!("Argument type mismatch for function '{}': expected {:?}, found {:?}", name, expected_ty, typed_arg.ty));
+                }
+                typed_args.push(typed_arg);
+            }
+
+            Ok(TypedExpr {
+                kind: ExprKind::Call { name, args: typed_args },
+                ty: ret_ty,
+            })
+        }
+        crate::hir::Expr::As { expr, ty } => {
+            let typed_expr = check_expr(ctx, *expr)?;
+            let dest_ty = Type::from(ty);
+            
+            // Check casting validity
+            let valid = match (typed_expr.ty, dest_ty) {
+                (Type::I64, Type::F64) | (Type::F64, Type::I64) => true,
+                (t1, t2) if t1 == t2 => true,
+                _ => false,
+            };
+
+            if !valid {
+                return Err(format!("Cannot cast expression from {:?} to {:?}", typed_expr.ty, dest_ty));
+            }
+
+            Ok(TypedExpr {
+                kind: ExprKind::As {
+                    expr: Box::new(typed_expr),
+                    ty: dest_ty,
+                },
+                ty: dest_ty,
             })
         }
     }
