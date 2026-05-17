@@ -47,6 +47,11 @@ impl<'ctx> Codegen<'ctx> {
             struct_ty.set_body(&field_types, false);
         }
 
+        // Pre-declare libc's puts
+        let puts_param_types = vec![self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).as_basic_type_enum().into()];
+        let puts_fn_type = self.context.i64_type().fn_type(&puts_param_types, false);
+        self.module.add_function("puts", puts_fn_type, None);
+
         // Pre-register all function signatures first to support mutual/forward calls
         for f in &program.functions {
             let param_types: Vec<BasicTypeEnum<'ctx>> = f.params.iter()

@@ -198,6 +198,7 @@ mod tests {
             ("tests/struct_simple.king", 42),
             ("tests/struct_mutability.king", 42),
             ("tests/import_success.king", 60),
+            ("tests/strings.king", 42),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();

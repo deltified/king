@@ -1,0 +1,15 @@
+fn main() -> i64 {
+    let s1 = "Hello, World!";
+    puts(s1);
+
+    let s2 = "This\nIs\nA\nMultiline\nString";
+    puts(s2);
+
+    let s3 = "Escapes: \t \\ \" \0 hidden";
+    puts(s3);
+    
+    let s4 = "Hello, World!";
+    puts(s4);
+
+    return 42;
+}
