@@ -32,6 +32,13 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub fn compile_program(self, program: mir::Program<'ctx>) -> Module<'ctx> {
+        // Declare libc exit if not already declared
+        if self.module.get_function("exit").is_none() {
+            let exit_param_types = vec![self.context.i64_type().into()];
+            let exit_fn_type = self.context.void_type().fn_type(&exit_param_types, false);
+            self.module.add_function("exit", exit_fn_type, None);
+        }
+
         // Pre-create all struct types as opaque struct types first
         for s in &program.structs {
             let struct_ty = self.context.opaque_struct_type(s.name);
