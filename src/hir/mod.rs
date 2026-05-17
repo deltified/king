@@ -116,6 +116,12 @@ pub mod ast {
         Break,
         Continue,
         Comptime(Block<'a>),
+        InlineFor {
+            var_name: &'a str,
+            start: Expr<'a>,
+            end: Expr<'a>,
+            body: Block<'a>,
+        },
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +169,10 @@ pub mod ast {
         FieldAccess {
             expr: Box<Expr<'a>>,
             field: &'a str,
+        },
+        IndexAccess {
+            expr: Box<Expr<'a>>,
+            index: Box<Expr<'a>>,
         },
     }
 }
@@ -284,6 +294,12 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
         crate::parser::Statement::Break => Statement::Break,
         crate::parser::Statement::Continue => Statement::Continue,
         crate::parser::Statement::Comptime(body) => Statement::Comptime(build_block(body)),
+        crate::parser::Statement::InlineFor { var_name, start, end, body } => Statement::InlineFor {
+            var_name,
+            start: build_expr(start),
+            end: build_expr(end),
+            body: build_block(body),
+        },
         crate::parser::Statement::StructDef { .. }
         | crate::parser::Statement::Function { .. }
         | crate::parser::Statement::ExternFunction { .. }
@@ -344,6 +360,10 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
         crate::parser::Expr::FieldAccess { expr, field } => Expr::FieldAccess {
             expr: Box::new(build_expr(*expr)),
             field,
+        },
+        crate::parser::Expr::IndexAccess { expr, index } => Expr::IndexAccess {
+            expr: Box::new(build_expr(*expr)),
+            index: Box::new(build_expr(*index)),
         },
     }
 }
