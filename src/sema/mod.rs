@@ -8,6 +8,8 @@ pub mod ast {
         F64,
         Bool,
         Void,
+        Char,
+        Str,
         Ref {
             is_mut: bool,
             ty: Box<Type>,
@@ -22,6 +24,8 @@ pub mod ast {
                 HirType::F64 => Type::F64,
                 HirType::Bool => Type::Bool,
                 HirType::Void => Type::Void,
+                HirType::Char => Type::Char,
+                HirType::Str => Type::Str,
                 HirType::Ref { is_mut, ty } => Type::Ref {
                     is_mut,
                     ty: Box::new(Type::from(*ty)),
@@ -112,6 +116,7 @@ pub mod ast {
         Int(i64),
         Float(f64),
         Bool(bool),
+        Str(String),
         Binary {
             op: BinOp,
             lhs: Box<TypedExpr<'a>>,
@@ -237,11 +242,13 @@ impl<'a> SemaContext<'a> {
     }
 
     pub fn resolve_struct_type(&self, name: &str) -> Result<Type, String> {
-        if name == "i64" || name == "f64" || name == "bool" || name == "void" {
+        if name == "i64" || name == "f64" || name == "bool" || name == "void" || name == "char" || name == "str" {
             return Ok(match name {
                 "i64" => Type::I64,
                 "f64" => Type::F64,
                 "bool" => Type::Bool,
+                "char" => Type::Char,
+                "str" => Type::Str,
                 _ => Type::Void,
             });
         }
@@ -558,6 +565,13 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
         }
         crate::hir::Expr::Bool(val) => {
             Ok(TypedExpr { kind: ExprKind::Bool(val), ty: Type::Bool })
+        }
+        crate::hir::Expr::Str(val) => {
+            let ty = Type::Ref {
+                is_mut: false,
+                ty: Box::new(Type::Str),
+            };
+            Ok(TypedExpr { kind: ExprKind::Str(val), ty })
         }
         crate::hir::Expr::Unary { op, expr } => {
             use crate::parser::UnOp;
