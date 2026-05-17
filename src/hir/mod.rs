@@ -14,6 +14,13 @@ pub mod ast {
         pub name: &'a str,
         pub ty: HirType,
         pub contract: Option<Expr<'a>>,
+        pub default: Option<Expr<'a>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct CallArg<'a> {
+        pub name: Option<&'a str>,
+        pub value: Expr<'a>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +137,7 @@ pub mod ast {
         Call {
             name: &'a str,
             type_args: Vec<HirType>,
-            args: Vec<Expr<'a>>,
+            args: Vec<CallArg<'a>>,
         },
         As {
             expr: Box<Expr<'a>>,
@@ -174,6 +181,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                     name: p.name,
                     ty: lower_type(p.ty),
                     contract: p.contract.map(build_expr),
+                    default: p.default.map(build_expr),
                 }).collect();
                 let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
                 let body = build_block(body);
@@ -193,6 +201,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                     name: p.name,
                     ty: lower_type(p.ty),
                     contract: p.contract.map(build_expr),
+                    default: p.default.map(build_expr),
                 }).collect();
                 let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
                 extern_functions.push(ExternFunction {
@@ -303,7 +312,10 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
         crate::parser::Expr::Call { name, type_args, args } => Expr::Call {
             name,
             type_args: type_args.into_iter().map(lower_type).collect(),
-            args: args.into_iter().map(build_expr).collect(),
+            args: args.into_iter().map(|arg| CallArg {
+                name: arg.name,
+                value: build_expr(arg.value),
+            }).collect(),
         },
         crate::parser::Expr::As { expr, ty } => Expr::As {
             expr: Box::new(build_expr(*expr)),
