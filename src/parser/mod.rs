@@ -93,6 +93,7 @@ impl<'a> Parser<'a> {
                 };
                 let param_name = match self.advance() {
                     Some(Token::Ident(name)) => name,
+                    Some(Token::Others) => "others",
                     found => return Err(ParseError::ExpectedIdentifier { found }),
                 };
                 self.consume(Token::Colon, ":")?;
@@ -169,6 +170,25 @@ impl<'a> Parser<'a> {
         }
 
         match self.peek() {
+            Some(Token::Inline) => {
+                self.advance(); // consume 'inline'
+                self.consume(Token::For, "for")?;
+                let var_name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                self.consume(Token::In, "in")?;
+                let start = self.parse_expr(0)?;
+                self.consume(Token::DotDot, "..")?;
+                let end = self.parse_expr(0)?;
+                self.consume(Token::LBrace, "{")?;
+                let mut body = Vec::new();
+                while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                    body.push(self.parse_statement()?);
+                }
+                self.consume(Token::RBrace, "}")?;
+                Ok(Statement::InlineFor { var_name, start, end, body })
+            }
             Some(Token::Fn) => {
                 self.advance();
                 let name = match self.advance() {
@@ -537,10 +557,14 @@ impl<'a> Parser<'a> {
 
     fn parse_base_primary(&mut self) -> Result<Expr<'a>, ParseError<'a>> {
         match self.peek() {
-            Some(Token::Ident(_)) => {
+            Some(Token::Ident(_)) | Some(Token::Others) => {
                 let mut segments = Vec::new();
-                if let Some(Token::Ident(name)) = self.advance() {
-                    segments.push(name);
+                if let Some(tok) = self.advance() {
+                    match tok {
+                        Token::Ident(name) => segments.push(name),
+                        Token::Others => segments.push("others"),
+                        _ => unreachable!(),
+                    }
                 }
                 while self.peek() == Some(&Token::ColonColon) {
                     self.advance();
@@ -734,6 +758,15 @@ impl<'a> Parser<'a> {
                     expr = Expr::FieldAccess {
                         expr: Box::new(expr),
                         field,
+                    };
+                }
+                Token::LBracket => {
+                    self.advance(); // consume '['
+                    let index = self.parse_expr(0)?;
+                    self.consume(Token::RBracket, "]")?;
+                    expr = Expr::IndexAccess {
+                        expr: Box::new(expr),
+                        index: Box::new(index),
                     };
                 }
                 _ => break,

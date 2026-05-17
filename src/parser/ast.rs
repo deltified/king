@@ -90,6 +90,12 @@ pub enum Statement<'a> {
     Break,
     Continue,
     Comptime(Vec<Statement<'a>>),
+    InlineFor {
+        var_name: &'a str,
+        start: Expr<'a>,
+        end: Expr<'a>,
+        body: Vec<Statement<'a>>,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -137,6 +143,10 @@ pub enum Expr<'a> {
     FieldAccess {
         expr: Box<Expr<'a>>,
         field: &'a str,
+    },
+    IndexAccess {
+        expr: Box<Expr<'a>>,
+        index: Box<Expr<'a>>,
     },
 }
 
