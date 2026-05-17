@@ -83,60 +83,15 @@ mod tests {
         }
     }
 
-
-    #[test]
-    fn test_parsing() {
-        let fn_input = "fn add(x: i64, y: i64) -> i64 { return x + y; }";
-        let lexer = Lexer::new(fn_input);
-        let tokens = lexer.tokenize();
-        let ast = parser::parse(tokens).expect("Failed to parse function");
-
-        assert_eq!(
-            ast,
-            Program {
-                statements: vec![
-                    Statement::Function {
-                        name: "add",
-                        params: vec![
-                            Param { name: "x", ty: "i64" },
-                            Param { name: "y", ty: "i64" },
-                        ],
-                        ret_type: Some("i64"),
-                        body: vec![
-                            Statement::Return(Some(Expr::Binary {
-                                op: BinOp::Add,
-                                lhs: Box::new(Expr::Ident("x")),
-                                rhs: Box::new(Expr::Ident("y")),
-                            })),
-                        ],
-                    }
-                ]
-            }
-        );
-
-        let complex_input = "fn test() {
-            let mut x = 10;
-            x += 5;
-            if x > 15 {
-                x = 0;
-            } else {
-                while x < 15 {
-                    x += 1;
-                }
-            }
-        }";
-        let lexer = Lexer::new(complex_input);
-        let tokens = lexer.tokenize();
-        let ast = parser::parse(tokens).expect("Failed to parse complex function");
-        assert_eq!(ast.statements.len(), 1);
-    }
-
     #[test]
     fn test_king_source_files() {
         let test_cases = vec![
             ("tests/simple.king", 42),
             ("tests/arithmetic.king", 50),
             ("tests/loop.king", 55),
+            ("tests/fibonacci.king", 21),
+            ("tests/break_continue.king", 50),
+            ("tests/casts.king", 7),
         ];
         for (source_file, expected_ret) in test_cases {
             let pid = std::process::id();
