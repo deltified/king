@@ -4,9 +4,18 @@ pub struct Program<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum Type<'a> {
+    Ident(&'a str),
+    Ref {
+        is_mut: bool,
+        ty: Box<Type<'a>>,
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Param<'a> {
     pub name: &'a str,
-    pub ty: &'a str,
+    pub ty: Type<'a>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -24,7 +33,7 @@ pub enum Statement<'a> {
     Function {
         name: &'a str,
         params: Vec<Param<'a>>,
-        ret_type: Option<&'a str>,
+        ret_type: Option<Type<'a>>,
         body: Vec<Statement<'a>>,
     },
     Return(Option<Expr<'a>>),
@@ -62,8 +71,13 @@ pub enum Expr<'a> {
     },
     As {
         expr: Box<Expr<'a>>,
-        ty: &'a str,
+        ty: Type<'a>,
     },
+    Borrow {
+        is_mut: bool,
+        expr: Box<Expr<'a>>,
+    },
+    Deref(Box<Expr<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

@@ -1,7 +1,7 @@
 pub mod ast;
 
 use crate::lexer::Token;
-pub use ast::{Program, Statement, Expr, BinOp, Param, UnOp};
+pub use ast::{Program, Statement, Expr, BinOp, Param, UnOp, Type};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ParseError<'a> {
@@ -51,6 +51,34 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_type(&mut self) -> Result<Type<'a>, ParseError<'a>> {
+        match self.peek() {
+            Some(Token::Ampersand) => {
+                self.advance();
+                let is_mut = if self.peek() == Some(&Token::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let ty = self.parse_type()?;
+                Ok(Type::Ref {
+                    is_mut,
+                    ty: Box::new(ty),
+                })
+            }
+            Some(Token::Ident(ty)) => {
+                let ty_str = *ty;
+                self.advance();
+                Ok(Type::Ident(ty_str))
+            }
+            found => Err(ParseError::UnexpectedToken {
+                expected: "type name or '&'",
+                found: found.cloned(),
+            }),
+        }
+    }
+
     pub fn parse(&mut self) -> Result<Program<'a>, ParseError<'a>> {
         let mut statements = Vec::new();
         while self.peek().is_some() {
@@ -82,10 +110,7 @@ impl<'a> Parser<'a> {
                             found => return Err(ParseError::ExpectedIdentifier { found }),
                         };
                         self.consume(Token::Colon, ":")?;
-                        let param_ty = match self.advance() {
-                            Some(Token::Ident(ty)) => ty,
-                            found => return Err(ParseError::ExpectedIdentifier { found }),
-                        };
+                        let param_ty = self.parse_type()?;
                         params.push(Param { name: param_name, ty: param_ty });
                         if self.peek() == Some(&Token::Comma) {
                             self.advance();
@@ -100,10 +125,7 @@ impl<'a> Parser<'a> {
                 self.consume(Token::RParen, ")")?;
                 let ret_type = if self.peek() == Some(&Token::Arrow) {
                     self.advance();
-                    match self.advance() {
-                        Some(Token::Ident(ty)) => Some(ty),
-                        found => return Err(ParseError::ExpectedIdentifier { found }),
-                    }
+                    Some(self.parse_type()?)
                 } else {
                     None
                 };
@@ -260,10 +282,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 self.advance();
-                let ty = match self.advance() {
-                    Some(Token::Ident(ty)) => ty,
-                    found => return Err(ParseError::ExpectedIdentifier { found }),
-                };
+                let ty = self.parse_type()?;
                 lhs = Expr::As {
                     expr: Box::new(lhs),
                     ty,
@@ -338,6 +357,20 @@ impl<'a> Parser<'a> {
             Some(Token::Minus) => {
                 let expr = self.parse_primary()?;
                 Ok(Expr::Unary { op: UnOp::Neg, expr: Box::new(expr) })
+            }
+            Some(Token::Ampersand) => {
+                let is_mut = if self.peek() == Some(&Token::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                let expr = self.parse_primary()?;
+                Ok(Expr::Borrow { is_mut, expr: Box::new(expr) })
+            }
+            Some(Token::Star) => {
+                let expr = self.parse_primary()?;
+                Ok(Expr::Deref(Box::new(expr)))
             }
             Some(Token::LParen) => {
                 let expr = self.parse_expr(0)?;
