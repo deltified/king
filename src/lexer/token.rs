@@ -12,6 +12,11 @@ pub enum Token<'a> {
     
     Ident(&'a str),
     Int(i64),
+    Float(f64),
+    
+    As,
+    Break,
+    Continue,
     
     Assign, 
     Plus,   

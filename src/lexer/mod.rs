@@ -177,6 +177,9 @@ impl<'a> Lexer<'a> {
             "while" => Token::While,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
+            "as" => Token::As,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
             _ => Token::Ident(text),
         }
     }
@@ -187,7 +190,17 @@ impl<'a> Lexer<'a> {
             self.pos += 1;
         }
         
-        // This unwrap should never actually panic 
+        if self.pos < self.bytes.len() && self.bytes[self.pos] == b'.' {
+            if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1].is_ascii_digit() {
+                self.pos += 1; // consume '.'
+                while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_digit() {
+                    self.pos += 1;
+                }
+                let val: f64 = self.input[start..self.pos].parse().unwrap();
+                return Token::Float(val);
+            }
+        }
+        
         let val: i64 = self.input[start..self.pos].parse().unwrap();
         Token::Int(val)
     }
