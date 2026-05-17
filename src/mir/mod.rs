@@ -76,9 +76,17 @@ pub mod ast {
     }
 
     #[derive(Debug, Clone, PartialEq)]
+    pub struct ExternFunction<'a> {
+        pub name: &'a str,
+        pub params: Vec<(&'a str, Type)>,
+        pub ret_type: Type,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     pub struct Program<'a> {
         pub structs: Vec<crate::sema::ast::StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
+        pub extern_functions: Vec<ExternFunction<'a>>,
     }
 }
 
@@ -189,7 +197,18 @@ pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
             vars: ctx.vars,
         });
     }
-    Program { structs: program.structs, functions }
+
+    let mut extern_functions = Vec::new();
+    for f in program.extern_functions {
+        let params = f.params.into_iter().map(|p| (p.name, p.ty)).collect();
+        extern_functions.push(ExternFunction {
+            name: f.name,
+            params,
+            ret_type: f.ret_type,
+        });
+    }
+
+    Program { structs: program.structs, functions, extern_functions }
 }
 
 fn compile_block<'a>(ctx: &mut MirBuilderContext<'a>, block: crate::sema::Block<'a>) {

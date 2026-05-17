@@ -1,3 +1,5 @@
+extern fn puts(s: &str) -> i64;
+
 fn main() -> i64 {
     let s1 = "Hello, World!";
     puts(s1);
