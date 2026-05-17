@@ -12,12 +12,16 @@ pub mod ast {
         pub ty: HirType,
     }
 
-    #[derive(Debug, Clone, PartialEq, Copy)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum HirType {
         I64,
         F64,
         Bool,
         Void,
+        Ref {
+            is_mut: bool,
+            ty: Box<HirType>,
+        },
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +86,11 @@ pub mod ast {
             expr: Box<Expr<'a>>,
             ty: HirType,
         },
+        Borrow {
+            is_mut: bool,
+            expr: Box<Expr<'a>>,
+        },
+        Deref(Box<Expr<'a>>),
     }
 }
 
@@ -94,9 +103,9 @@ pub fn build<'a>(program: crate::parser::Program<'a>) -> Program<'a> {
             crate::parser::Statement::Function { name, params, ret_type, body } => {
                 let params = params.into_iter().map(|p| Param {
                     name: p.name,
-                    ty: parse_type(p.ty),
+                    ty: lower_type(p.ty),
                 }).collect();
-                let ret_type = ret_type.map(parse_type).unwrap_or(HirType::Void);
+                let ret_type = ret_type.map(lower_type).unwrap_or(HirType::Void);
                 let body = build_block(body);
                 functions.push(Function { name, params, ret_type, body });
             }
@@ -106,12 +115,18 @@ pub fn build<'a>(program: crate::parser::Program<'a>) -> Program<'a> {
     Program { functions }
 }
 
-fn parse_type(ty: &str) -> HirType {
+fn lower_type(ty: crate::parser::Type) -> HirType {
     match ty {
-        "i64" => HirType::I64,
-        "f64" => HirType::F64,
-        "bool" => HirType::Bool,
-        _ => HirType::Void,
+        crate::parser::Type::Ident(name) => match name {
+            "i64" => HirType::I64,
+            "f64" => HirType::F64,
+            "bool" => HirType::Bool,
+            _ => HirType::Void,
+        },
+        crate::parser::Type::Ref { is_mut, ty } => HirType::Ref {
+            is_mut,
+            ty: Box::new(lower_type(*ty)),
+        },
     }
 }
 
@@ -171,7 +186,12 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
         },
         crate::parser::Expr::As { expr, ty } => Expr::As {
             expr: Box::new(build_expr(*expr)),
-            ty: parse_type(ty),
+            ty: lower_type(ty),
         },
+        crate::parser::Expr::Borrow { is_mut, expr } => Expr::Borrow {
+            is_mut,
+            expr: Box::new(build_expr(*expr)),
+        },
+        crate::parser::Expr::Deref(expr) => Expr::Deref(Box::new(build_expr(*expr))),
     }
 }
