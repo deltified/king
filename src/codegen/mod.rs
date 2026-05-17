@@ -98,6 +98,7 @@ impl<'ctx> Codegen<'ctx> {
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Char | Type::Str => self.context.i8_type().as_basic_type_enum(),
             Type::Void => panic!("Void type cannot be converted to BasicTypeEnum"),
+            Type::TypeVal => self.context.i64_type().as_basic_type_enum(),
             Type::Ref { ty, .. } => {
                 let inner = self.get_llvm_type(*ty);
                 inner.ptr_type(inkwell::AddressSpace::default()).as_basic_type_enum()
