@@ -11,7 +11,7 @@ pub enum Place<'a> {
 }
 
 impl<'a> Place<'a> {
-    fn name(&self, func: &Function<'a>) -> String {
+    fn name(&self, _func: &Function<'a>) -> String {
         match self {
             Place::Local(var_id) => {
                 format!("_t{}", var_id.0)
@@ -27,6 +27,7 @@ pub struct Loan<'a> {
     pub is_mut: bool,
 }
 
+#[allow(dead_code)]
 struct Liveness<'a> {
     live_in: HashMap<BasicBlockId, HashSet<Place<'a>>>,
     live_out: HashMap<BasicBlockId, HashSet<Place<'a>>>,
