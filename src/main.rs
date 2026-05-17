@@ -129,5 +129,52 @@ fn test_llvm() {
     
     println!("Generated LLVM IR for end-to-end compiler pipeline:");
     module.print_to_stderr();
+
+    // 7. Write LLVM IR to file and compile & run with clang
+    let ir_path = std::path::Path::new("output.ll");
+    module.print_to_file(ir_path).expect("Failed to write LLVM IR to file");
+
+    let main_c = r#"
+#include <stdio.h>
+
+extern long long compute(long long x);
+
+int main() {
+    long long result = compute(10);
+    printf("compute(10) = %lld\n", result);
+    return 0;
+}
+"#;
+    std::fs::write("main.c", main_c).expect("Failed to write main.c");
+
+    println!("Compiling output.ll and main.c with clang...");
+    let compile_status = std::process::Command::new("clang")
+        .arg("output.ll")
+        .arg("main.c")
+        .arg("-o")
+        .arg("output_bin")
+        .status()
+        .expect("Failed to execute clang");
+
+    if !compile_status.success() {
+        panic!("Clang compilation failed");
+    }
+
+    println!("Running output_bin...");
+    let run_output = std::process::Command::new("./output_bin")
+        .output()
+        .expect("Failed to run output_bin");
+
+    if !run_output.status.success() {
+        panic!("Executable run failed");
+    }
+
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    println!("Output of compiled program:\n{}", stdout);
+
+    // Clean up temporary files
+    let _ = std::fs::remove_file("output.ll");
+    let _ = std::fs::remove_file("main.c");
+    let _ = std::fs::remove_file("output_bin");
 }
 
