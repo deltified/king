@@ -1,6 +1,7 @@
 use super::ast::{ExternFunction, Function, Param, Program, StructDef, Type};
 use super::context::{mangle_name, SemaContext, StructMeta, FunctionMeta};
 use super::statement::check_block;
+use super::expr::check_expr;
 
 pub fn get_type_id(ty: &Type) -> i64 {
     match ty {
@@ -171,6 +172,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
                 Param {
                     name: orig_f.name,
                     ty,
+                    contract: None,
                 }
             })
             .collect();
@@ -192,7 +194,12 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
         let mut params = Vec::new();
         for (p, ty) in f.params.iter().zip(param_tys) {
             ctx.declare_var(p.name, ty.clone(), true);
-            params.push(Param { name: p.name, ty });
+            let typed_contract = if let Some(ref c) = p.contract {
+                Some(check_expr(&mut ctx, c.clone())?)
+            } else {
+                None
+            };
+            params.push(Param { name: p.name, ty, contract: typed_contract });
         }
 
         let body = check_block(&mut ctx, f.body)?;
@@ -222,6 +229,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
                 Param {
                     name: p.name,
                     ty: res_ty,
+                    contract: None,
                 }
             })
             .collect();

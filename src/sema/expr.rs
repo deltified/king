@@ -4,7 +4,7 @@ use super::ast::{ExprKind, FieldInit, Function, Param, Type, TypedExpr};
 use super::context::{mangle_name, OptionExt, SemaContext, FunctionMeta};
 use super::generics::{
     get_mangled_mono_name, resolve_generic_template, substitute_block, substitute_type,
-    type_to_hir,
+    substitute_expr, type_to_hir,
 };
 use super::analyze::get_type_id;
 use super::statement::check_block;
@@ -156,12 +156,35 @@ pub fn check_expr<'a>(
                         mapping.insert(*gen_param, &hir_type_args[i]);
                     }
 
+                    // Compile-time Type Gate Check
+                    ctx.push_scope();
+                    for (i, gen_param) in template.generics.iter().enumerate() {
+                        ctx.declare_var(gen_param, resolved_type_args[i].clone(), false);
+                    }
+                    for (i, gen_param) in template.generics.iter().enumerate() {
+                        if let Some(ref contract) = template.generic_contracts[i] {
+                            let checked = check_expr(ctx, contract.clone())?;
+                            match checked.kind {
+                                ExprKind::Bool(true) => {}
+                                ExprKind::Bool(false) => {
+                                    return Err(format!(
+                                        "Generic type constraint violated for parameter '{}': contract evaluated to false",
+                                        gen_param
+                                    ));
+                                }
+                                _ => return Err(format!("Generic constraint must evaluate to a boolean constant")),
+                            }
+                        }
+                    }
+                    ctx.pop_scope();
+
                     let sub_params = template
                         .params
                         .iter()
                         .map(|p| crate::hir::Param {
                             name: p.name,
                             ty: substitute_type(&p.ty, &mapping),
+                            contract: p.contract.clone().map(|c| substitute_expr(c, &mapping)),
                         })
                         .collect::<Vec<_>>();
 
@@ -199,9 +222,15 @@ pub fn check_expr<'a>(
                     let mut params = Vec::new();
                     for (p, ty) in sub_params.iter().zip(&sema_param_tys) {
                         ctx.declare_var(p.name, ty.clone(), true);
+                        let typed_contract = if let Some(ref c) = p.contract {
+                            Some(check_expr(ctx, c.clone())?)
+                        } else {
+                            None
+                        };
                         params.push(Param {
                             name: p.name,
                             ty: ty.clone(),
+                            contract: typed_contract,
                         });
                     }
 

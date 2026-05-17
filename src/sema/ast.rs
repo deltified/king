@@ -53,6 +53,7 @@ pub struct StructDef<'a> {
 pub struct Param<'a> {
     pub name: &'a str,
     pub ty: Type,
+    pub contract: Option<TypedExpr<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
