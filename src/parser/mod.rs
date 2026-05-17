@@ -88,6 +88,23 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> Result<Statement<'a>, ParseError<'a>> {
+        let is_pub = if self.peek() == Some(&Token::Pub) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        if is_pub {
+            match self.peek() {
+                Some(Token::Fn) | Some(Token::Struct) => {}
+                found => return Err(ParseError::UnexpectedToken {
+                    expected: "fn or struct after pub",
+                    found: found.cloned(),
+                }),
+            }
+        }
+
         match self.peek() {
             Some(Token::Fn) => {
                 self.advance();
@@ -135,7 +152,7 @@ impl<'a> Parser<'a> {
                     body.push(self.parse_statement()?);
                 }
                 self.consume(Token::RBrace, "}")?;
-                Ok(Statement::Function { name, params, ret_type, body })
+                Ok(Statement::Function { name, params, ret_type, body, is_pub })
             }
             Some(Token::Return) => {
                 self.advance();
@@ -252,7 +269,26 @@ impl<'a> Parser<'a> {
                     }
                 }
                 self.consume(Token::RBrace, "}")?;
-                Ok(Statement::StructDef { name, fields })
+                Ok(Statement::StructDef { name, fields, is_pub })
+            }
+            Some(Token::Import) => {
+                self.advance(); // consume 'import'
+                let mut path = Vec::new();
+                let first = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                path.push(first);
+                while self.peek() == Some(&Token::ColonColon) {
+                    self.advance(); // consume '::'
+                    let segment = match self.advance() {
+                        Some(Token::Ident(name)) => name,
+                        found => return Err(ParseError::ExpectedIdentifier { found }),
+                    };
+                    path.push(segment);
+                }
+                self.consume(Token::Semi, ";")?;
+                Ok(Statement::Import(path))
             }
             _ => {
                 let expr = self.parse_expr(0)?;

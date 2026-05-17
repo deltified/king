@@ -53,11 +53,14 @@ pub enum Statement<'a> {
         params: Vec<Param<'a>>,
         ret_type: Option<Type<'a>>,
         body: Vec<Statement<'a>>,
+        is_pub: bool,
     },
     StructDef {
         name: &'a str,
         fields: Vec<FieldDef<'a>>,
+        is_pub: bool,
     },
+    Import(Vec<&'a str>),
     Return(Option<Expr<'a>>),
     If {
         cond: Expr<'a>,
