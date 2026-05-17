@@ -12,6 +12,7 @@ pub mod ast {
             is_mut: bool,
             ty: Box<Type>,
         },
+        Struct(String),
     }
 
     impl From<HirType> for Type {
@@ -25,19 +26,33 @@ pub mod ast {
                     is_mut,
                     ty: Box::new(Type::from(*ty)),
                 },
+                HirType::Struct(name) => Type::Struct(name),
             }
         }
     }
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct Program<'a> {
+        pub structs: Vec<StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct StructDef<'a> {
+        pub name: &'a str,
+        pub fields: Vec<Param<'a>>,
     }
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct Param<'a> {
         pub name: &'a str,
         pub ty: Type,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct FieldInit<'a> {
+        pub name: &'a str,
+        pub value: TypedExpr<'a>,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +78,11 @@ pub mod ast {
         Assign {
             name: &'a str,
             is_deref: bool,
+            value: TypedExpr<'a>,
+        },
+        AssignField {
+            expr: TypedExpr<'a>,
+            field: &'a str,
             value: TypedExpr<'a>,
         },
         Expr(TypedExpr<'a>),
@@ -114,6 +134,14 @@ pub mod ast {
             expr: Box<TypedExpr<'a>>,
         },
         Deref(Box<TypedExpr<'a>>),
+        StructLiteral {
+            name: &'a str,
+            fields: Vec<FieldInit<'a>>,
+        },
+        FieldAccess {
+            expr: Box<TypedExpr<'a>>,
+            field: &'a str,
+        },
     }
 }
 
@@ -124,6 +152,7 @@ use std::collections::HashMap;
 pub struct SemaContext<'a> {
     scopes: Vec<HashMap<&'a str, (Type, bool)>>,
     functions: HashMap<&'a str, (Vec<Type>, Type)>,
+    pub structs: HashMap<String, Vec<(String, Type)>>,
     current_ret_type: Option<Type>,
     loop_depth: usize,
 }
@@ -133,6 +162,7 @@ impl<'a> SemaContext<'a> {
         Self {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
+            structs: HashMap::new(),
             current_ret_type: None,
             loop_depth: 0,
         }
@@ -165,6 +195,20 @@ impl<'a> SemaContext<'a> {
 pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, String> {
     let mut ctx = SemaContext::new();
     
+    // Register all structs first
+    let mut structs = Vec::new();
+    for s in &program.structs {
+        let mut fields = Vec::new();
+        let mut sema_fields = Vec::new();
+        for f in &s.fields {
+            let f_ty = Type::from(f.ty.clone());
+            fields.push((f.name.to_string(), f_ty.clone()));
+            sema_fields.push(Param { name: f.name, ty: f_ty });
+        }
+        ctx.structs.insert(s.name.to_string(), fields);
+        structs.push(StructDef { name: s.name, fields: sema_fields });
+    }
+
     for f in &program.functions {
         let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty.clone())).collect();
         ctx.functions.insert(f.name, (param_tys, Type::from(f.ret_type.clone())));
@@ -194,7 +238,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
         });
     }
 
-    Ok(Program { functions })
+    Ok(Program { structs, functions })
 }
 
 fn check_block<'a>(ctx: &mut SemaContext<'a>, block: crate::hir::Block<'a>) -> Result<Block<'a>, String> {
@@ -247,6 +291,43 @@ fn check_statement<'a>(ctx: &mut SemaContext<'a>, stmt: crate::hir::Statement<'a
                 }
             }
             Ok(Statement::Assign { name, is_deref, value: typed_value })
+        }
+        crate::hir::Statement::AssignField { expr, field, value } => {
+            let checked_expr = check_expr(ctx, expr)?;
+            if !is_writable(ctx, &checked_expr) {
+                return Err(format!("Cannot assign to field '{}' of immutable expression", field));
+            }
+
+            let mut current_ty = &checked_expr.ty;
+            while let Type::Ref { ty, .. } = current_ty {
+                current_ty = ty;
+            }
+
+            match current_ty {
+                Type::Struct(struct_name) => {
+                    let field_ty = {
+                        let struct_fields = ctx.structs.get(struct_name)
+                            .ok_ok_or_else(|| format!("Struct '{}' not defined", struct_name))?;
+                        let (_, field_ty) = struct_fields.iter().find(|(n, _)| n == field)
+                            .ok_ok_or_else(|| format!("No field '{}' on struct '{}'", field, struct_name))?;
+                        field_ty.clone()
+                    };
+                    
+                    let checked_val = check_expr(ctx, value)?;
+                    if checked_val.ty != field_ty {
+                        return Err(format!("Type mismatch in field assignment for '{}': expected {:?}, found {:?}", field, field_ty, checked_val.ty));
+                    }
+                    
+                    Ok(Statement::AssignField {
+                        expr: checked_expr,
+                        field,
+                        value: checked_val,
+                    })
+                }
+                other => {
+                    Err(format!("Cannot assign to field '{}' of non-struct type {:?}", field, other))
+                }
+            }
         }
         crate::hir::Statement::Expr(expr) => {
             let typed_expr = check_expr(ctx, expr)?;
@@ -422,7 +503,7 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             if !valid {
                 return Err(format!("Cannot cast expression from {:?} to {:?}", typed_expr.ty, dest_ty));
             }
- 
+  
             Ok(TypedExpr {
                 kind: ExprKind::As {
                     expr: Box::new(typed_expr),
@@ -434,15 +515,8 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
         crate::hir::Expr::Borrow { is_mut, expr } => {
             let typed_expr = check_expr(ctx, *expr)?;
             if is_mut {
-                match &typed_expr.kind {
-                    ExprKind::Ident(name) => {
-                        let (_, var_is_mut) = ctx.lookup_var(name)
-                            .ok_ok_or_else(|| format!("Variable '{}' not found in scope", name))?;
-                        if !var_is_mut {
-                            return Err(format!("Cannot borrow immutable variable '{}' as mutable", name));
-                        }
-                    }
-                    _ => {}
+                if !is_writable(ctx, &typed_expr) {
+                    return Err(format!("Cannot borrow immutable expression as mutable"));
                 }
             }
             
@@ -474,6 +548,78 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                 }
             }
         }
+        crate::hir::Expr::StructLiteral { name, fields } => {
+            let struct_fields = ctx.structs.get(name)
+                .ok_ok_or_else(|| format!("Struct '{}' not defined", name))?.clone();
+            
+            if fields.len() != struct_fields.len() {
+                return Err(format!("Struct '{}' expects {} fields, found {}", name, struct_fields.len(), fields.len()));
+            }
+            
+            let mut checked_fields = Vec::new();
+            for (expected_name, expected_ty) in &struct_fields {
+                let init = fields.iter().find(|f| f.name == expected_name)
+                    .ok_ok_or_else(|| format!("Missing field '{}' in initializer for '{}'", expected_name, name))?;
+                let checked_val = check_expr(ctx, init.value.clone())?;
+                if checked_val.ty != *expected_ty {
+                    return Err(format!("Type mismatch for field '{}' of struct '{}': expected {:?}, found {:?}", expected_name, name, expected_ty, checked_val.ty));
+                }
+                checked_fields.push(FieldInit { name: init.name, value: checked_val });
+            }
+            
+            Ok(TypedExpr {
+                kind: ExprKind::StructLiteral { name, fields: checked_fields },
+                ty: Type::Struct(name.to_string()),
+            })
+        }
+        crate::hir::Expr::FieldAccess { expr, field } => {
+            let checked_expr = check_expr(ctx, *expr)?;
+            let mut current_ty = &checked_expr.ty;
+            while let Type::Ref { ty, .. } = current_ty {
+                current_ty = ty;
+            }
+            match current_ty {
+                Type::Struct(struct_name) => {
+                    let struct_fields = ctx.structs.get(struct_name)
+                        .ok_ok_or_else(|| format!("Struct '{}' not defined", struct_name))?;
+                    let (_, field_ty) = struct_fields.iter().find(|(n, _)| n == field)
+                        .ok_ok_or_else(|| format!("No field '{}' on struct '{}'", field, struct_name))?;
+                    
+                    Ok(TypedExpr {
+                        kind: ExprKind::FieldAccess { expr: Box::new(checked_expr), field },
+                        ty: field_ty.clone(),
+                    })
+                }
+                other => {
+                    Err(format!("Cannot access field '{}' on non-struct type {:?}", field, other))
+                }
+            }
+        }
+    }
+}
+
+fn is_writable<'a>(ctx: &SemaContext<'a>, expr: &TypedExpr<'a>) -> bool {
+    match &expr.kind {
+        ExprKind::Ident(name) => {
+            if let Some((_, is_mut)) = ctx.lookup_var(name) {
+                is_mut
+            } else {
+                false
+            }
+        }
+        ExprKind::Deref(sub_expr) => {
+            match &sub_expr.ty {
+                Type::Ref { is_mut, .. } => *is_mut,
+                _ => false,
+            }
+        }
+        ExprKind::FieldAccess { expr: base_expr, .. } => {
+            match &base_expr.ty {
+                Type::Ref { is_mut, .. } => *is_mut,
+                _ => is_writable(ctx, base_expr),
+            }
+        }
+        _ => false,
     }
 }
  
