@@ -461,11 +461,12 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
         }
         crate::hir::Expr::Deref(expr) => {
             let typed_expr = check_expr(ctx, *expr)?;
-            match typed_expr.ty {
+            match &typed_expr.ty {
                 Type::Ref { ty: inner_ty, .. } => {
+                    let inner = (**inner_ty).clone();
                     Ok(TypedExpr {
                         kind: ExprKind::Deref(Box::new(typed_expr)),
-                        ty: *inner_ty,
+                        ty: inner,
                     })
                 }
                 other => {
