@@ -74,6 +74,22 @@ fn test_parsing() {
             ]
         }
     );
+
+    let complex_input = "fn test() {
+        let mut x = 10;
+        x += 5;
+        if x > 15 {
+            x = 0;
+        } else {
+            while x < 15 {
+                x += 1;
+            }
+        }
+    }";
+    let lexer = Lexer::new(complex_input);
+    let tokens = lexer.tokenize();
+    let ast = parser::parse(tokens).expect("Failed to parse complex function");
+    assert_eq!(ast.statements.len(), 1);
     println!("parser passed test!");
 }
 

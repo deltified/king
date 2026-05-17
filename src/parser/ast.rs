@@ -13,6 +13,7 @@ pub struct Param<'a> {
 pub enum Statement<'a> {
     Let {
         name: &'a str,
+        is_mut: bool,
         value: Expr<'a>,
     },
     Assign {
@@ -27,16 +28,30 @@ pub enum Statement<'a> {
         body: Vec<Statement<'a>>,
     },
     Return(Option<Expr<'a>>),
+    If {
+        cond: Expr<'a>,
+        then_block: Vec<Statement<'a>>,
+        else_block: Option<Vec<Statement<'a>>>,
+    },
+    While {
+        cond: Expr<'a>,
+        body: Vec<Statement<'a>>,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr<'a> {
     Ident(&'a str),
     Int(i64),
+    Bool(bool),
     Binary {
         op: BinOp,
         lhs: Box<Expr<'a>>,
         rhs: Box<Expr<'a>>,
+    },
+    Unary {
+        op: UnOp,
+        expr: Box<Expr<'a>>,
     },
 }
 
@@ -46,4 +61,18 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum UnOp {
+    Not,
+    Neg,
 }

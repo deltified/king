@@ -1,7 +1,7 @@
 pub mod ast;
 
 use crate::lexer::Token;
-pub use ast::{Program, Statement, Expr, BinOp, Param};
+pub use ast::{Program, Statement, Expr, BinOp, Param, UnOp};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ParseError<'a> {
@@ -121,6 +121,12 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Let) => {
                 self.advance(); // consume 'let'
+                let is_mut = if self.peek() == Some(&Token::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
                 
                 // Expect identifier
                 let name = match self.advance() {
@@ -137,22 +143,87 @@ impl<'a> Parser<'a> {
                 // Expect ';'
                 self.consume(Token::Semi, ";")?;
                 
-                Ok(Statement::Let { name, value })
+                Ok(Statement::Let { name, is_mut, value })
+            }
+            Some(Token::If) => {
+                self.advance(); // consume 'if'
+                let cond = self.parse_expr(0)?;
+                self.consume(Token::LBrace, "{")?;
+                let mut then_block = Vec::new();
+                while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                    then_block.push(self.parse_statement()?);
+                }
+                self.consume(Token::RBrace, "}")?;
+                
+                let else_block = if self.peek() == Some(&Token::Else) {
+                    self.advance(); // consume 'else'
+                    if self.peek() == Some(&Token::If) {
+                        Some(vec![self.parse_statement()?])
+                    } else {
+                        self.consume(Token::LBrace, "{")?;
+                        let mut else_stmts = Vec::new();
+                        while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                            else_stmts.push(self.parse_statement()?);
+                        }
+                        self.consume(Token::RBrace, "}")?;
+                        Some(else_stmts)
+                    }
+                } else {
+                    None
+                };
+                
+                Ok(Statement::If { cond, then_block, else_block })
+            }
+            Some(Token::While) => {
+                self.advance(); // consume 'while'
+                let cond = self.parse_expr(0)?;
+                self.consume(Token::LBrace, "{")?;
+                let mut body = Vec::new();
+                while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                    body.push(self.parse_statement()?);
+                }
+                self.consume(Token::RBrace, "}")?;
+                
+                Ok(Statement::While { cond, body })
             }
             Some(Token::Ident(name)) => {
-                // Look ahead to differentiate between assignment and expression
-                if self.tokens.get(self.pos + 1) == Some(&Token::Assign) {
-                    let name_val = *name;
-                    self.advance(); // consume identifier
-                    self.advance(); // consume '='
-                    
-                    let value = self.parse_expr(0)?;
-                    self.consume(Token::Semi, ";")?;
-                    Ok(Statement::Assign { name: name_val, value })
-                } else {
-                    let value = self.parse_expr(0)?;
-                    self.consume(Token::Semi, ";")?;
-                    Ok(Statement::Expr(value))
+                let next = self.tokens.get(self.pos + 1);
+                match next {
+                    Some(Token::Assign) => {
+                        let name_val = *name;
+                        self.advance(); // consume identifier
+                        self.advance(); // consume '='
+                        
+                        let value = self.parse_expr(0)?;
+                        self.consume(Token::Semi, ";")?;
+                        Ok(Statement::Assign { name: name_val, value })
+                    }
+                    Some(Token::PlusEq) | Some(Token::MinusEq) | Some(Token::StarEq) | Some(Token::SlashEq) => {
+                        let name_val = *name;
+                        self.advance(); // consume identifier
+                        let op_tok = self.advance().unwrap();
+                        let op = match op_tok {
+                            Token::PlusEq => BinOp::Add,
+                            Token::MinusEq => BinOp::Sub,
+                            Token::StarEq => BinOp::Mul,
+                            Token::SlashEq => BinOp::Div,
+                            _ => unreachable!(),
+                        };
+                        let rhs_expr = self.parse_expr(0)?;
+                        self.consume(Token::Semi, ";")?;
+                        
+                        let desugared_value = Expr::Binary {
+                            op,
+                            lhs: Box::new(Expr::Ident(name_val)),
+                            rhs: Box::new(rhs_expr),
+                        };
+                        Ok(Statement::Assign { name: name_val, value: desugared_value })
+                    }
+                    _ => {
+                        let value = self.parse_expr(0)?;
+                        self.consume(Token::Semi, ";")?;
+                        Ok(Statement::Expr(value))
+                    }
                 }
             }
             _ => {
@@ -172,6 +243,14 @@ impl<'a> Parser<'a> {
                 Token::Minus => BinOp::Sub,
                 Token::Star => BinOp::Mul,
                 Token::Slash => BinOp::Div,
+                Token::EqEq => BinOp::Eq,
+                Token::NotEq => BinOp::Ne,
+                Token::LessThan => BinOp::Lt,
+                Token::LessEq => BinOp::Le,
+                Token::GreaterThan => BinOp::Gt,
+                Token::GreaterEq => BinOp::Ge,
+                Token::AndAnd => BinOp::And,
+                Token::OrOr => BinOp::Or,
                 _ => break,
             };
 
@@ -198,6 +277,15 @@ impl<'a> Parser<'a> {
         match self.advance() {
             Some(Token::Ident(name)) => Ok(Expr::Ident(name)),
             Some(Token::Int(val)) => Ok(Expr::Int(val)),
+            Some(Token::Bool(val)) => Ok(Expr::Bool(val)),
+            Some(Token::Bang) => {
+                let expr = self.parse_primary()?;
+                Ok(Expr::Unary { op: UnOp::Not, expr: Box::new(expr) })
+            }
+            Some(Token::Minus) => {
+                let expr = self.parse_primary()?;
+                Ok(Expr::Unary { op: UnOp::Neg, expr: Box::new(expr) })
+            }
             Some(Token::LParen) => {
                 let expr = self.parse_expr(0)?;
                 self.consume(Token::RParen, ")")?;
@@ -210,8 +298,11 @@ impl<'a> Parser<'a> {
 
 fn op_precedence(op: BinOp) -> u8 {
     match op {
-        BinOp::Add | BinOp::Sub => 1,
-        BinOp::Mul | BinOp::Div => 2,
+        BinOp::Or => 1,
+        BinOp::And => 2,
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => 3,
+        BinOp::Add | BinOp::Sub => 4,
+        BinOp::Mul | BinOp::Div => 5,
     }
 }
 
