@@ -129,9 +129,9 @@ impl<'a> Parser<'a> {
 
         if is_pub {
             match self.peek() {
-                Some(Token::Fn) | Some(Token::Struct) => {}
+                Some(Token::Fn) | Some(Token::Struct) | Some(Token::Extern) => {}
                 found => return Err(ParseError::UnexpectedToken {
-                    expected: "fn or struct after pub",
+                    expected: "fn, struct or extern after pub",
                     found: found.cloned(),
                 }),
             }
@@ -174,7 +174,7 @@ impl<'a> Parser<'a> {
                     None
                 };
                 self.consume(Token::Semi, ";")?;
-                Ok(Statement::ExternFunction { name, params, ret_type })
+                Ok(Statement::ExternFunction { name, params, ret_type, is_pub })
             }
             Some(Token::Return) => {
                 self.advance();
@@ -422,8 +422,28 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_base_primary(&mut self) -> Result<Expr<'a>, ParseError<'a>> {
-        match self.advance() {
-            Some(Token::Ident(name)) => {
+        match self.peek() {
+            Some(Token::Ident(_)) => {
+                let mut segments = Vec::new();
+                if let Some(Token::Ident(name)) = self.advance() {
+                    segments.push(name);
+                }
+                while self.peek() == Some(&Token::ColonColon) {
+                    self.advance();
+                    if let Some(Token::Ident(name)) = self.advance() {
+                        segments.push(name);
+                    } else {
+                        return Err(ParseError::ExpectedIdentifier { found: self.peek().cloned() });
+                    }
+                }
+
+                let full_name = if segments.len() == 1 {
+                    segments[0]
+                } else {
+                    let joined = segments.join("::");
+                    Box::leak(joined.into_boxed_str())
+                };
+
                 if self.peek() == Some(&Token::LParen) {
                     self.advance(); // consume '('
                     let mut args = Vec::new();
@@ -438,7 +458,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     self.consume(Token::RParen, ")")?;
-                    Ok(Expr::Call { name, args })
+                    Ok(Expr::Call { name: full_name, args })
                 } else if self.peek() == Some(&Token::LBrace) {
                     self.advance(); // consume '{'
                     let mut fields = Vec::new();
@@ -462,24 +482,43 @@ impl<'a> Parser<'a> {
                         }
                     }
                     self.consume(Token::RBrace, "}")?;
-                    Ok(Expr::StructLiteral { name, fields })
+                    Ok(Expr::StructLiteral { name: full_name, fields })
                 } else {
-                    Ok(Expr::Ident(name))
+                    Ok(Expr::Ident(full_name))
                 }
             }
-            Some(Token::Int(val)) => Ok(Expr::Int(val)),
-            Some(Token::Float(val)) => Ok(Expr::Float(val)),
-            Some(Token::Bool(val)) => Ok(Expr::Bool(val)),
-            Some(Token::Str(val)) => Ok(Expr::Str(val)),
+            Some(Token::Int(_)) => {
+                if let Some(Token::Int(val)) = self.advance() {
+                    Ok(Expr::Int(val))
+                } else { unreachable!() }
+            }
+            Some(Token::Float(_)) => {
+                if let Some(Token::Float(val)) = self.advance() {
+                    Ok(Expr::Float(val))
+                } else { unreachable!() }
+            }
+            Some(Token::Bool(_)) => {
+                if let Some(Token::Bool(val)) = self.advance() {
+                    Ok(Expr::Bool(val))
+                } else { unreachable!() }
+            }
+            Some(Token::Str(_)) => {
+                if let Some(Token::Str(val)) = self.advance() {
+                    Ok(Expr::Str(val))
+                } else { unreachable!() }
+            }
             Some(Token::Bang) => {
+                self.advance();
                 let expr = self.parse_primary()?;
                 Ok(Expr::Unary { op: UnOp::Not, expr: Box::new(expr) })
             }
             Some(Token::Minus) => {
+                self.advance();
                 let expr = self.parse_primary()?;
                 Ok(Expr::Unary { op: UnOp::Neg, expr: Box::new(expr) })
             }
             Some(Token::Ampersand) => {
+                self.advance();
                 let is_mut = if self.peek() == Some(&Token::Mut) {
                     self.advance();
                     true
@@ -490,15 +529,17 @@ impl<'a> Parser<'a> {
                 Ok(Expr::Borrow { is_mut, expr: Box::new(expr) })
             }
             Some(Token::Star) => {
+                self.advance();
                 let expr = self.parse_primary()?;
                 Ok(Expr::Deref(Box::new(expr)))
             }
             Some(Token::LParen) => {
+                self.advance();
                 let expr = self.parse_expr(0)?;
                 self.consume(Token::RParen, ")")?;
                 Ok(expr)
             }
-            found => Err(ParseError::InvalidExpression { found }),
+            found => Err(ParseError::InvalidExpression { found: found.cloned() }),
         }
     }
 

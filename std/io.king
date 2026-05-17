@@ -1,0 +1,1 @@
+pub extern fn puts(s: &str) -> i64;

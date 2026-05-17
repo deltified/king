@@ -1,17 +1,17 @@
-extern fn puts(s: &str) -> i64;
+import std::io;
 
 fn main() -> i64 {
     let s1 = "Hello, World!";
-    puts(s1);
+    std::io::puts(s1);
 
     let s2 = "This\nIs\nA\nMultiline\nString";
-    puts(s2);
+    std::io::puts(s2);
 
     let s3 = "Escapes: \t \\ \" \0 hidden";
-    puts(s3);
+    std::io::puts(s3);
     
     let s4 = "Hello, World!";
-    puts(s4);
+    std::io::puts(s4);
 
     return 42;
 }

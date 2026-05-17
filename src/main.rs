@@ -49,10 +49,22 @@ fn load_all_files(
     // Process imports first to strictly disallow circular imports and load dependencies
     let parent_dir = canonical.parent().unwrap_or_else(|| std::path::Path::new("."));
     for imp in &imports {
-        // Resolve import path relative to the importing file
-        let mut resolved_path = parent_dir.to_path_buf();
-        for segment in imp {
-            resolved_path.push(segment);
+        let mut resolved_path = std::path::PathBuf::new();
+        
+        if imp.first().map(|s| s.as_str()) == Some("std") {
+            // Resolve std:: relative to the current working directory (project root)
+            if let Ok(cwd) = std::env::current_dir() {
+                resolved_path = cwd.to_path_buf();
+                for segment in imp {
+                    resolved_path.push(segment);
+                }
+            }
+        } else {
+            // Resolve import path relative to the importing file
+            resolved_path = parent_dir.to_path_buf();
+            for segment in imp {
+                resolved_path.push(segment);
+            }
         }
         resolved_path.set_extension("king");
         

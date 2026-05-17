@@ -65,6 +65,8 @@ pub mod ast {
         pub name: &'a str,
         pub params: Vec<Param<'a>>,
         pub ret_type: HirType,
+        pub module_name: String,
+        pub is_pub: bool,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -169,7 +171,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                     is_pub,
                 });
             }
-            crate::parser::Statement::ExternFunction { name, params, ret_type } => {
+            crate::parser::Statement::ExternFunction { name, params, ret_type, is_pub } => {
                 let params = params.into_iter().map(|p| Param {
                     name: p.name,
                     ty: lower_type(p.ty),
@@ -179,6 +181,8 @@ pub fn build<'a>(program: crate::parser::Program<'a>, module_name: &str) -> Prog
                     name,
                     params,
                     ret_type,
+                    module_name: module_name.to_string(),
+                    is_pub,
                 });
             }
             crate::parser::Statement::StructDef { name, fields, is_pub } => {

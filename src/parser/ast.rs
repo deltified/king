@@ -59,6 +59,7 @@ pub enum Statement<'a> {
         name: &'a str,
         params: Vec<Param<'a>>,
         ret_type: Option<Type<'a>>,
+        is_pub: bool,
     },
     StructDef {
         name: &'a str,
