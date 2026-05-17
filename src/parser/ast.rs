@@ -17,6 +17,13 @@ pub struct Param<'a> {
     pub name: &'a str,
     pub ty: Type<'a>,
     pub contract: Option<Expr<'a>>,
+    pub default: Option<Expr<'a>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct CallArg<'a> {
+    pub name: Option<&'a str>,
+    pub value: Expr<'a>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -104,7 +111,7 @@ pub enum Expr<'a> {
     Call {
         name: &'a str,
         type_args: Vec<Type<'a>>,
-        args: Vec<Expr<'a>>,
+        args: Vec<CallArg<'a>>,
     },
     As {
         expr: Box<Expr<'a>>,

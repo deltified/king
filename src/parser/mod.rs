@@ -121,7 +121,13 @@ impl<'a> Parser<'a> {
                     contract = Some(contract_expr);
                 }
 
-                params.push(Param { name: param_name, ty: param_ty, contract });
+                let mut default = None;
+                if self.peek() == Some(&Token::Assign) {
+                    self.advance(); // consume '='
+                    default = Some(self.parse_expr(0)?);
+                }
+
+                params.push(Param { name: param_name, ty: param_ty, contract, default });
                 if self.peek() == Some(&Token::Comma) {
                     self.advance();
                     if self.peek() == Some(&Token::RParen) {
@@ -593,7 +599,17 @@ impl<'a> Parser<'a> {
                     let mut args = Vec::new();
                     if self.peek() != Some(&Token::RParen) {
                         loop {
-                            args.push(self.parse_expr(0)?);
+                            let arg_expr = self.parse_expr(0)?;
+                            let mut arg_name = None;
+                            let mut arg_val = arg_expr;
+                            if let Expr::Ident(id_name) = &arg_val {
+                                if self.peek() == Some(&Token::Colon) {
+                                    self.advance(); // consume ':'
+                                    arg_name = Some(*id_name);
+                                    arg_val = self.parse_expr(0)?;
+                                }
+                            }
+                            args.push(ast::CallArg { name: arg_name, value: arg_val });
                             if self.peek() == Some(&Token::Comma) {
                                 self.advance();
                             } else {
