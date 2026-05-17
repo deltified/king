@@ -132,13 +132,7 @@ impl<'a> MirBuilderContext<'a> {
         id
     }
 
-    fn is_terminated(&self, id: BasicBlockId) -> bool {
-        if let Some(bb) = self.basic_blocks.iter().find(|b| b.id == id) {
-            !matches!(bb.terminator, Terminator::Unreachable)
-        } else {
-            false
-        }
-    }
+
 }
 
 pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
@@ -154,7 +148,7 @@ pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
         compile_block(&mut ctx, f.body);
 
         // Ensure entry block or last block is terminated with standard return if no explicit return is present
-        if let Some(curr) = ctx.current_block {
+        if let Some(_curr) = ctx.current_block {
             ctx.terminate(Terminator::Return(None));
         }
 

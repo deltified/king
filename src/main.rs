@@ -98,26 +98,36 @@ fn test_parsing() {
 }
 
 fn test_llvm() {
+    let input = "fn compute(mut x: i64) -> i64 {
+        let mut y = 0;
+        while x > 0 {
+            if x == 5 {
+                y += 100;
+            } else {
+                y += x;
+            }
+            x -= 1;
+        }
+        return y;
+    }";
+    
+    let lexer = Lexer::new(input);
+    let tokens = lexer.tokenize();
+    
+    let ast = parser::parse(tokens).expect("Failed to parse");
+    
+    let hir_prog = hir::build(ast);
+    
+    let typed_hir = sema::analyze(hir_prog).expect("Semantic analysis failed");
+    
+    let mir_prog = mir::build(typed_hir);
+    
     use inkwell::context::Context;
-
     let context = Context::create();
-    let module = context.create_module("sum");
-    let builder = context.create_builder();
-
-    let i64_type = context.i64_type();
-    let fn_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-    let function = module.add_function("sum", fn_type, None);
-
-    let basic_block = context.append_basic_block(function, "entry");
-    builder.position_at_end(basic_block);
-
-    let x = function.get_nth_param(0).unwrap().into_int_value();
-    let y = function.get_nth_param(1).unwrap().into_int_value();
-
-    let sum = builder.build_int_add(x, y, "sum_val").unwrap();
-    builder.build_return(Some(&sum)).unwrap();
-
-    println!("Generated LLVM IR:");
+    let codegen = codegen::Codegen::new(&context, "king_module");
+    let module = codegen.compile_program(mir_prog);
+    
+    println!("Generated LLVM IR for end-to-end compiler pipeline:");
     module.print_to_stderr();
 }
 

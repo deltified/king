@@ -71,6 +71,12 @@ impl<'a> Parser<'a> {
                 let mut params = Vec::new();
                 if self.peek() != Some(&Token::RParen) {
                     loop {
+                        let _is_param_mut = if self.peek() == Some(&Token::Mut) {
+                            self.advance();
+                            true
+                        } else {
+                            false
+                        };
                         let param_name = match self.advance() {
                             Some(Token::Ident(name)) => name,
                             found => return Err(ParseError::ExpectedIdentifier { found }),
