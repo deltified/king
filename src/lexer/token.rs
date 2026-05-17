@@ -15,6 +15,7 @@ pub enum Token<'a> {
     Ident(&'a str),
     Int(i64),
     Float(f64),
+    Str(String),
     
     As,
     Break,

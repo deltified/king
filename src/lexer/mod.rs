@@ -145,6 +145,7 @@ impl<'a> Lexer<'a> {
                     Token::Bang
                 }
             }
+            b'"' => return Some(self.read_string()),
             
             // Fast paths for Identifiers and Numbers
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => return Some(self.read_identifier()),
@@ -215,5 +216,43 @@ impl<'a> Lexer<'a> {
         
         let val: i64 = self.input[start..self.pos].parse().unwrap();
         Token::Int(val)
+    }
+
+    fn read_string(&mut self) -> Token<'a> {
+        self.pos += 1; // consume starting '"'
+        let mut s = String::new();
+        while self.pos < self.bytes.len() {
+            let b = self.bytes[self.pos];
+            if b == b'"' {
+                self.pos += 1; // consume ending '"'
+                break;
+            }
+            if b == b'\\' {
+                self.pos += 1;
+                if self.pos < self.bytes.len() {
+                    let esc = self.bytes[self.pos];
+                    self.pos += 1;
+                    match esc {
+                        b'n' => s.push('\n'),
+                        b't' => s.push('\t'),
+                        b'r' => s.push('\r'),
+                        b'\\' => s.push('\\'),
+                        b'"' => s.push('"'),
+                        b'0' => s.push('\0'),
+                        other => {
+                            s.push('\\');
+                            s.push(other as char);
+                        }
+                    }
+                } else {
+                    s.push('\\');
+                }
+            } else {
+                let c = self.input[self.pos..].chars().next().unwrap();
+                self.pos += c.len_utf8();
+                s.push(c);
+            }
+        }
+        Token::Str(s)
     }
 }
