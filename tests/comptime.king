@@ -1,0 +1,14 @@
+fn main() -> i64 {
+    let mut score = 10;
+    
+    comptime {
+        let x = 42;
+        let y = x + 8;
+        if y == 50 {
+            // verified at compile-time!
+        }
+    }
+    
+    score = score + 32;
+    return score;
+}

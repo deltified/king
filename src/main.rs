@@ -120,6 +120,8 @@ mod tests {
             ("tests/import_success.king", 60),
             ("tests/strings.king", 42),
             ("tests/reflection.king", 52),
+            ("tests/generics.king", 42),
+            ("tests/comptime.king", 42),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();
