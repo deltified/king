@@ -17,12 +17,14 @@ pub enum Token<'a> {
     As,
     Break,
     Continue,
+    Struct,
     
     Assign, 
     Plus,   
     Minus,  
     Star,  
     Slash, 
+    Dot,
     
     LParen, 
     RParen, 
