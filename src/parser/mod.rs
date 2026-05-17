@@ -192,6 +192,16 @@ impl<'a> Parser<'a> {
                 
                 Ok(Statement::While { cond, body })
             }
+            Some(Token::Break) => {
+                self.advance();
+                self.consume(Token::Semi, ";")?;
+                Ok(Statement::Break)
+            }
+            Some(Token::Continue) => {
+                self.advance();
+                self.consume(Token::Semi, ";")?;
+                Ok(Statement::Continue)
+            }
             Some(Token::Ident(name)) => {
                 let next = self.tokens.get(self.pos + 1);
                 match next {
@@ -244,6 +254,23 @@ impl<'a> Parser<'a> {
         let mut lhs = self.parse_primary()?;
 
         while let Some(tok) = self.peek() {
+            if tok == &Token::As {
+                let precedence = 6;
+                if precedence < min_precedence {
+                    break;
+                }
+                self.advance();
+                let ty = match self.advance() {
+                    Some(Token::Ident(ty)) => ty,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                lhs = Expr::As {
+                    expr: Box::new(lhs),
+                    ty,
+                };
+                continue;
+            }
+
             let op = match tok {
                 Token::Plus => BinOp::Add,
                 Token::Minus => BinOp::Sub,
@@ -281,8 +308,28 @@ impl<'a> Parser<'a> {
 
     fn parse_primary(&mut self) -> Result<Expr<'a>, ParseError<'a>> {
         match self.advance() {
-            Some(Token::Ident(name)) => Ok(Expr::Ident(name)),
+            Some(Token::Ident(name)) => {
+                if self.peek() == Some(&Token::LParen) {
+                    self.advance(); // consume '('
+                    let mut args = Vec::new();
+                    if self.peek() != Some(&Token::RParen) {
+                        loop {
+                            args.push(self.parse_expr(0)?);
+                            if self.peek() == Some(&Token::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(Token::RParen, ")")?;
+                    Ok(Expr::Call { name, args })
+                } else {
+                    Ok(Expr::Ident(name))
+                }
+            }
             Some(Token::Int(val)) => Ok(Expr::Int(val)),
+            Some(Token::Float(val)) => Ok(Expr::Float(val)),
             Some(Token::Bool(val)) => Ok(Expr::Bool(val)),
             Some(Token::Bang) => {
                 let expr = self.parse_primary()?;

@@ -37,12 +37,15 @@ pub enum Statement<'a> {
         cond: Expr<'a>,
         body: Vec<Statement<'a>>,
     },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr<'a> {
     Ident(&'a str),
     Int(i64),
+    Float(f64),
     Bool(bool),
     Binary {
         op: BinOp,
@@ -52,6 +55,14 @@ pub enum Expr<'a> {
     Unary {
         op: UnOp,
         expr: Box<Expr<'a>>,
+    },
+    Call {
+        name: &'a str,
+        args: Vec<Expr<'a>>,
+    },
+    As {
+        expr: Box<Expr<'a>>,
+        ty: &'a str,
     },
 }
 
