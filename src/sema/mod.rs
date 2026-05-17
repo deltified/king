@@ -39,6 +39,7 @@ pub mod ast {
     pub struct Program<'a> {
         pub structs: Vec<StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
+        pub extern_functions: Vec<ExternFunction<'a>>,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +66,13 @@ pub mod ast {
         pub params: Vec<Param<'a>>,
         pub ret_type: Type,
         pub body: Block<'a>,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ExternFunction<'a> {
+        pub name: &'a str,
+        pub params: Vec<Param<'a>>,
+        pub ret_type: Type,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -167,6 +175,7 @@ pub struct FunctionMeta<'a> {
     pub is_pub: bool,
     pub param_types: Vec<Type>,
     pub ret_type: Type,
+    pub is_extern: bool,
 }
 
 pub fn mangle_name(module_name: &str, name: &str) -> &'static str {
@@ -210,6 +219,7 @@ impl<'a> SemaContext<'a> {
             is_pub: true,
             param_types: vec![Type::Ref { is_mut: false, ty: Box::new(Type::Str) }],
             ret_type: Type::I64,
+            is_extern: true,
         });
         ctx
     }
@@ -334,6 +344,20 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
             is_pub: f.is_pub,
             param_types: param_tys,
             ret_type: ret_ty,
+            is_extern: false,
+        });
+    }
+
+    for f in &program.extern_functions {
+        let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty.clone())).collect();
+        let ret_ty = Type::from(f.ret_type.clone());
+        ctx.all_functions.push(FunctionMeta {
+            original_name: f.name,
+            module_name: "extern".to_string(),
+            is_pub: true,
+            param_types: param_tys,
+            ret_type: ret_ty,
+            is_extern: true,
         });
     }
 
@@ -372,7 +396,12 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
     
     // Update all_functions with resolved signature types, and populate ctx.functions by their mangled names!
     for (mod_name, orig_name, params, ret) in resolved_functions {
-        let mangled = mangle_name(&mod_name, &orig_name);
+        let is_extern = ctx.all_functions.iter().find(|f| f.original_name == orig_name && f.module_name == mod_name).map(|f| f.is_extern).unwrap_or(false);
+        let mangled = if is_extern {
+            Box::leak(orig_name.to_string().into_boxed_str())
+        } else {
+            mangle_name(&mod_name, &orig_name)
+        };
         ctx.functions.insert(mangled, (params.clone(), ret.clone()));
         if let Some(meta) = ctx.all_functions.iter_mut().find(|f| f.original_name == orig_name && f.module_name == mod_name) {
             meta.param_types = params;
@@ -419,7 +448,19 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
         });
     }
 
-    Ok(Program { structs, functions })
+    let mut extern_functions = Vec::new();
+    for f in &program.extern_functions {
+        ctx.current_module = "extern".to_string();
+        let params = f.params.iter().map(|p| {
+            let ty = Type::from(p.ty.clone());
+            let res_ty = ctx.resolve_type(ty).unwrap();
+            Param { name: p.name, ty: res_ty }
+        }).collect();
+        let ret_type = ctx.resolve_type(Type::from(f.ret_type.clone())).unwrap();
+        extern_functions.push(ExternFunction { name: f.name, params, ret_type });
+    }
+
+    Ok(Program { structs, functions, extern_functions })
 }
 
 fn check_block<'a>(ctx: &mut SemaContext<'a>, block: crate::hir::Block<'a>) -> Result<Block<'a>, String> {
