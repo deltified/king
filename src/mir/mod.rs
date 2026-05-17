@@ -182,6 +182,29 @@ pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
 
         let params: Vec<(&'a str, Type)> = f.params.iter().map(|p| (p.name, p.ty.clone())).collect();
 
+        // Insert runtime checks for parameter contracts at the very top
+        for p in &f.params {
+            if let Some(ref contract) = p.contract {
+                let cond_op = compile_expr(&mut ctx, contract.clone());
+                let fail_lbl = ctx.new_block();
+                let next_lbl = ctx.new_block();
+                
+                ctx.terminate(Terminator::CondBranch {
+                    cond: cond_op,
+                    then_block: next_lbl,
+                    else_block: fail_lbl,
+                });
+                
+                // Compile fail block
+                ctx.start_block(fail_lbl);
+                ctx.push_statement(Statement::Call("exit", vec![Operand::Int(101)]));
+                ctx.terminate(Terminator::Unreachable);
+                
+                // Start next block
+                ctx.start_block(next_lbl);
+            }
+        }
+
         compile_block(&mut ctx, f.body);
 
         // Ensure entry block or last block is terminated with standard return if no explicit return is present
