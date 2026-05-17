@@ -15,6 +15,7 @@ pub mod ast {
     #[derive(Debug, Clone, PartialEq, Copy)]
     pub enum HirType {
         I64,
+        F64,
         Bool,
         Void,
     }
@@ -54,12 +55,15 @@ pub mod ast {
             cond: Expr<'a>,
             body: Block<'a>,
         },
+        Break,
+        Continue,
     }
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum Expr<'a> {
         Ident(&'a str),
         Int(i64),
+        Float(f64),
         Bool(bool),
         Binary {
             op: BinOp,
@@ -69,6 +73,14 @@ pub mod ast {
         Unary {
             op: UnOp,
             expr: Box<Expr<'a>>,
+        },
+        Call {
+            name: &'a str,
+            args: Vec<Expr<'a>>,
+        },
+        As {
+            expr: Box<Expr<'a>>,
+            ty: HirType,
         },
     }
 }
@@ -97,6 +109,7 @@ pub fn build<'a>(program: crate::parser::Program<'a>) -> Program<'a> {
 fn parse_type(ty: &str) -> HirType {
     match ty {
         "i64" => HirType::I64,
+        "f64" => HirType::F64,
         "bool" => HirType::Bool,
         _ => HirType::Void,
     }
@@ -129,6 +142,8 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
             cond: build_expr(cond),
             body: build_block(body),
         },
+        crate::parser::Statement::Break => Statement::Break,
+        crate::parser::Statement::Continue => Statement::Continue,
         crate::parser::Statement::Function { .. } => {
             panic!("Nested functions not supported in HIR builder");
         }
@@ -139,6 +154,7 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
     match expr {
         crate::parser::Expr::Ident(name) => Expr::Ident(name),
         crate::parser::Expr::Int(val) => Expr::Int(val),
+        crate::parser::Expr::Float(val) => Expr::Float(val),
         crate::parser::Expr::Bool(val) => Expr::Bool(val),
         crate::parser::Expr::Binary { op, lhs, rhs } => Expr::Binary {
             op,
@@ -148,6 +164,14 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
         crate::parser::Expr::Unary { op, expr } => Expr::Unary {
             op,
             expr: Box::new(build_expr(*expr)),
+        },
+        crate::parser::Expr::Call { name, args } => Expr::Call {
+            name,
+            args: args.into_iter().map(build_expr).collect(),
+        },
+        crate::parser::Expr::As { expr, ty } => Expr::As {
+            expr: Box::new(build_expr(*expr)),
+            ty: parse_type(ty),
         },
     }
 }
