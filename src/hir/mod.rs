@@ -46,6 +46,7 @@ pub mod ast {
         },
         Assign {
             name: &'a str,
+            is_deref: bool,
             value: Expr<'a>,
         },
         Expr(Expr<'a>),
@@ -142,8 +143,9 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
             is_mut,
             value: build_expr(value),
         },
-        crate::parser::Statement::Assign { name, value } => Statement::Assign {
+        crate::parser::Statement::Assign { name, is_deref, value } => Statement::Assign {
             name,
+            is_deref,
             value: build_expr(value),
         },
         crate::parser::Statement::Expr(expr) => Statement::Expr(build_expr(expr)),
