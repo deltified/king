@@ -154,4 +154,35 @@ mod tests {
         }
         assert!(failed.is_empty(), "Some tests failed!");
     }
+
+    #[test]
+    fn test_borrow_checker_errors() {
+        let error_test_cases = vec![
+            ("tests/borrow_err_double_mut.king", "already borrowed"),
+            ("tests/borrow_err_mut_and_immut.king", "already borrowed mutably"),
+            ("tests/borrow_err_write_borrowed.king", "borrowed"),
+            ("tests/borrow_err_read_mut_borrowed.king", "mutably borrowed"),
+            ("tests/borrow_err_write_immut_ref.king", "immutable reference"),
+            ("tests/borrow_err_return_local_ref.king", "Cannot return reference to local variable"),
+        ];
+
+        let temp_dir = std::env::temp_dir();
+        for (source_file, expected_err) in error_test_cases {
+            let pid = std::process::id();
+            let ir_path = temp_dir.join(format!("output_err_{}.ll", pid));
+            let _cleanup = TempCleanup {
+                paths: vec![ir_path.clone()],
+            };
+
+            let res = compile_file(source_file, ir_path.to_str().unwrap());
+            assert!(res.is_err(), "Expected {} to fail compilation, but it succeeded!", source_file);
+            let err_msg = res.unwrap_err();
+            assert!(
+                err_msg.contains(expected_err),
+                "Expected error for {} to contain '{}', but got '{}'",
+                source_file, expected_err, err_msg
+            );
+            println!("Error Test PASSED: {} (Failed as expected with: {})", source_file, err_msg);
+        }
+    }
 }
