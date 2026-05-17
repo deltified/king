@@ -386,6 +386,20 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            if tok == &Token::Is {
+                let precedence = 6;
+                if precedence < min_precedence {
+                    break;
+                }
+                self.advance();
+                let ty = self.parse_type()?;
+                lhs = Expr::Is {
+                    expr: Box::new(lhs),
+                    ty,
+                };
+                continue;
+            }
+
             let op = match tok {
                 Token::Plus => BinOp::Add,
                 Token::Minus => BinOp::Sub,
@@ -532,6 +546,24 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let expr = self.parse_primary()?;
                 Ok(Expr::Deref(Box::new(expr)))
+            }
+            Some(Token::Builtin(name)) => {
+                let name_val = *name;
+                self.advance();
+                self.consume(Token::LParen, "(")?;
+                let mut args = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        args.push(self.parse_expr(0)?);
+                        if self.peek() == Some(&Token::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.consume(Token::RParen, ")")?;
+                Ok(Expr::BuiltinCall { name: name_val, args })
             }
             Some(Token::LParen) => {
                 self.advance();

@@ -105,6 +105,14 @@ pub enum Expr<'a> {
         expr: Box<Expr<'a>>,
         ty: Type<'a>,
     },
+    Is {
+        expr: Box<Expr<'a>>,
+        ty: Type<'a>,
+    },
+    BuiltinCall {
+        name: &'a str,
+        args: Vec<Expr<'a>>,
+    },
     Borrow {
         is_mut: bool,
         expr: Box<Expr<'a>>,
