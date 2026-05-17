@@ -60,8 +60,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lexer::Lexer;
-    use parser::{Program, Statement, Param, Expr, BinOp};
     use std::path::PathBuf;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -93,6 +91,8 @@ mod tests {
             ("tests/break_continue.king", 50),
             ("tests/casts.king", 7),
         ];
+        let mut failed = Vec::new();
+        let mut passed = Vec::new();
         for (source_file, expected_ret) in test_cases {
             let pid = std::process::id();
             let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -102,19 +102,53 @@ mod tests {
             let _cleanup = TempCleanup {
                 paths: vec![ir_path.clone(), output_bin_path.clone()],
             };
-            compile_file(source_file, ir_path.to_str().unwrap()).expect("Compilation failed");
+            if let Err(e) = compile_file(source_file, ir_path.to_str().unwrap()) {
+                failed.push((source_file, format!("Compilation failed: {}", e)));
+                continue;
+            }
             let compile_status = Command::new("clang")
                 .arg(&ir_path)
                 .arg("-o")
                 .arg(&output_bin_path)
-                .status()
-                .expect("Failed to execute clang");
-            assert!(compile_status.success(), "Clang compilation failed");
-            let run_output = Command::new(&output_bin_path)
-                .status()
-                .expect("Failed to run output binary");
-            let exit_code = run_output.code().expect("Process terminated by signal");
-            assert_eq!(exit_code, expected_ret);
+                .status();
+            let status = match compile_status {
+                Ok(s) => s,
+                Err(e) => {
+                    failed.push((source_file, format!("Failed to run clang: {}", e)));
+                    continue;
+                }
+            };
+            if !status.success() {
+                failed.push((source_file, "Clang compilation failed".to_string()));
+                continue;
+            }
+            let run_output = Command::new(&output_bin_path).status();
+            let run_status = match run_output {
+                Ok(s) => s,
+                Err(e) => {
+                    failed.push((source_file, format!("Failed to run executable: {}", e)));
+                    continue;
+                }
+            };
+            let exit_code = match run_status.code() {
+                Some(code) => code,
+                None => {
+                    failed.push((source_file, "Process terminated by signal".to_string()));
+                    continue;
+                }
+            };
+            if exit_code == expected_ret {
+                passed.push(source_file);
+            } else {
+                failed.push((source_file, format!("Expected exit code {}, got {}", expected_ret, exit_code)));
+            }
         }
+        for test in &passed {
+            println!("Test PASSED: {}", test);
+        }
+        for (test, err) in &failed {
+            println!("Test FAILED: {} ({})", test, err);
+        }
+        assert!(failed.is_empty(), "Some tests failed!");
     }
 }
