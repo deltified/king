@@ -1,0 +1,9 @@
+fn configure_core(frequency: i64, voltage: f64 = 1.2, turbo: bool = false) -> i64 {
+    return frequency;
+}
+
+fn main() -> i64 {
+    // Error: Passing unknown named parameter
+    let res = configure_core(3800, volt: 1.15);
+    return 0;
+}

@@ -124,6 +124,7 @@ mod tests {
             ("tests/comptime.king", 42),
             ("tests/contract_runtime_pass.king", 42),
             ("tests/contract_runtime_fail.king", 101),
+            ("tests/named_default_args.king", 42),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();
@@ -200,6 +201,9 @@ mod tests {
             ("tests/import_err_private.king", "private"),
             ("tests/import_err_circular.king", "Circular import detected"),
             ("tests/contract_comptime_fail.king", "Generic type constraint violated"),
+            ("tests/named_default_err_positional.king", "expects at most 1 positional arguments"),
+            ("tests/named_default_err_unknown.king", "has no parameter named 'volt'"),
+            ("tests/named_default_err_missing.king", "Missing required argument for parameter 'frequency'"),
         ];
 
         let temp_dir = std::env::temp_dir();

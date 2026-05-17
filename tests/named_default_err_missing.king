@@ -1,0 +1,9 @@
+fn configure_core(frequency: i64, voltage: f64 = 1.2, turbo: bool = false) -> i64 {
+    return frequency;
+}
+
+fn main() -> i64 {
+    // Error: Missing required positional parameter 'frequency'
+    let res = configure_core();
+    return 0;
+}

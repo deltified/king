@@ -1,0 +1,39 @@
+fn configure_core(frequency: i64, voltage: f64 = 1.2, turbo: bool = false) -> i64 {
+    let mut score = frequency;
+    if turbo {
+        score = score + 500;
+    }
+    if voltage > 1.1 {
+        score = score + 10;
+    } else {
+        score = score - 10;
+    }
+    return score;
+}
+
+fn configure_generic<T>(val: T, factor: i64 = 2) -> i64 {
+    return (val as i64) * factor;
+}
+
+fn main() -> i64 {
+    // 1. Omit all defaults: voltage = 1.2 (> 1.1), turbo = false
+    let res1 = configure_core(1000); // 1000 + 10 = 1010
+    
+    // 2. Override turbo: voltage = 1.2 (> 1.1), turbo = true
+    let res2 = configure_core(1000, turbo: true); // 1000 + 500 + 10 = 1510
+    
+    // 3. Override voltage and turbo: voltage = 1.05 (< 1.1), turbo = true
+    let res3 = configure_core(1000, voltage: 1.05, turbo: true); // 1000 + 500 - 10 = 1490
+
+    // 4. Test generic function default argument
+    let res4 = configure_generic<i64>(100); // 100 * 2 = 200
+    let res5 = configure_generic<i64>(100, factor: 3); // 100 * 3 = 300
+
+    let total = res1 + res2 + res3 + res4 + res5;
+    // 1010 + 1510 + 1490 + 200 + 300 = 4510
+    
+    if total == 4510 {
+        return 42; // Success return code
+    }
+    return 101;
+}
