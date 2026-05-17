@@ -14,6 +14,7 @@ pub mod ast {
         Int(i64),
         Float(f64),
         Bool(bool),
+        Str(String),
         Ident(&'a str),
     }
 
@@ -355,6 +356,7 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
         crate::sema::ast::ExprKind::Int(val) => Operand::Int(val),
         crate::sema::ast::ExprKind::Float(val) => Operand::Float(val),
         crate::sema::ast::ExprKind::Bool(val) => Operand::Bool(val),
+        crate::sema::ast::ExprKind::Str(val) => Operand::Str(val),
         crate::sema::ast::ExprKind::Binary { op, lhs, rhs } => {
             let lhs_op = compile_expr(ctx, *lhs);
             let rhs_op = compile_expr(ctx, *rhs);
