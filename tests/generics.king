@@ -3,23 +3,23 @@ struct Point {
     y: i64,
 }
 
-fn identity<T: type>(x: T) -> T {
+fn identity<T>(x: T) -> T {
     return x;
 }
 
-fn add_one<T: type>(x: T) -> T {
+fn add_one<T>(x: T) -> T {
     return x + 1;
 }
 
-fn sum_values<T: type, U: type>(x: T, y: U) -> i64 {
+fn sum_values<T, U>(x: T, y: U) -> i64 {
     return (x as i64) + (y as i64);
 }
 
-fn deref_identity<T: type>(x: &T) -> T {
+fn deref_identity<T>(x: &T) -> T {
     return *x;
 }
 
-fn get_x<T: type>(p: &T) -> i64 {
+fn get_x<T>(p: &T) -> i64 {
     return (*p).x;
 }
 

@@ -6,7 +6,7 @@ fn add_metrics(category: i64, others: f64) -> f64 {
     return sum;
 }
 
-fn multiAdd<T: type>(first: &str, others: T) -> i64 {
+fn multiAdd<T>(first: &str, others: T) -> i64 {
     let mut sum = 0;
     inline for i in 0..others.len {
         sum = sum + (others[i] as i64);

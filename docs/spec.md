@@ -84,7 +84,7 @@ fn log_metrics(category: u32, others: f64) {
 Generic functions can also utilize variadics.
 
 ```
-fn multiAdd<T: type [is i64 || is f64]>(first: &str, others: T) -> T {...}
+fn multiAdd<T [is i64 || is f64]>(first: &str, others: T) -> T {...}
 ```
 In this case, every single item in `others` must be of type T.
 
@@ -109,7 +109,7 @@ Value and type gates are attached to parameter fields inside brackets [ ... ]. T
 | Constraint Category | Syntax Prototype | Execution Strategy   |
 | :---- | :---- | :---- |
 | **Runtime Value Contract** | fn scale(v: f64 [ != 0.0 ]) | Value range propagation; elides checks if provable, inserts fast call-site panic branch if dynamic. |
-| **Compile-Time Type Gate** | fn run<T: type>(a: T [ is i64 || is i32 ]) | Evaluated entirely during monomorphization. Emits structured compiler error if condition is false. |
+| **Compile-Time Type Gate** | fn run<T>(a: T [ is i64 || is i32 ]) | Evaluated entirely during monomorphization. Emits structured compiler error if condition is false. |
 
 ## **4. Complete Comptime Reflection & Evaluation**
 
@@ -118,7 +118,7 @@ Value and type gates are attached to parameter fields inside brackets [ ... ]. T
 The language implements a comptime execution pipeline where normal code logic can execute natively inside the compiler shell. This completely replaces standard structural macro logic with programmatic introspection APIs.
 
 ```
-fn generate_serializer<T: type>() {  
+fn generate_serializer<T>() {  
     comptime {  
         let metadata = reflect::();  
         inline for field in metadata.fields {  
@@ -178,7 +178,20 @@ trait Writer {
     fn write_buffer(&mut self, data: &[u8]) -> Result;  
 }
 ```
-Any data structure that implements a method named write_buffer with a matching signature automatically fulfills the is Writer trait criteria. Dynamic vtables (dyn Writer) are explicitly bundled only when developers explicitly declare dynamic runtime arrays or heap interfaces.
+`impl ... for ...` can then be used to implement that trait per type.
+There can be multiple type (or struct) names after the `for` to boundle implementation where it is identical. You then use standard generics to write the code:
+
+```
+trait MathCapable {
+    fn square(&mut self);
+    fn double(&mut self);
+}
+impl MathCapable for i32, i64, f32, f64 {
+    // constraints automatically enforced
+    fn square<T>(&mut self: T) { return self * self; }
+    fn double<T>(&mut self: T) { return self * 2 as T; }
+}
+```
 
 ## **7. Auditable Isolation: The trusting Subsystem**
 

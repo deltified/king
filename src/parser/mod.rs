@@ -204,13 +204,6 @@ impl<'a> Parser<'a> {
                             Some(Token::Ident(n)) => n,
                             found => return Err(ParseError::ExpectedIdentifier { found }),
                         };
-                        if self.peek() == Some(&Token::Colon) {
-                            self.advance(); // consume ':'
-                            match self.advance() {
-                                Some(Token::Ident("type")) => {}
-                                found => return Err(ParseError::UnexpectedToken { expected: "type", found }),
-                            }
-                        }
                         
                         let mut contract = None;
                         if self.peek() == Some(&Token::LBracket) {
