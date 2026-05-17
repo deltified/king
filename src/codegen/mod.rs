@@ -133,6 +133,16 @@ impl<'ctx> Codegen<'ctx> {
                         let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
                         self.builder.build_store(ptr_val, val).unwrap();
                     }
+                    mir::Statement::Call(name, args) => {
+                        let fn_val = self.module.get_function(name)
+                            .unwrap_or_else(|| panic!("Function {} not found in LLVM module", name));
+                        let mut compiled_args = Vec::new();
+                        for arg in &args {
+                            let val = self.compile_operand(arg, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                            compiled_args.push(val.into());
+                        }
+                        self.builder.build_call(fn_val, &compiled_args, "call_void_tmp").unwrap();
+                    }
                 }
             }
 
