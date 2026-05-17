@@ -149,12 +149,40 @@ pub use ast::*;
 
 use std::collections::HashMap;
 
+pub struct StructMeta<'a> {
+    pub original_name: &'a str,
+    pub module_name: String,
+    pub is_pub: bool,
+    pub fields: Vec<(String, Type)>,
+}
+
+pub struct FunctionMeta<'a> {
+    pub original_name: &'a str,
+    pub module_name: String,
+    pub is_pub: bool,
+    pub param_types: Vec<Type>,
+    pub ret_type: Type,
+}
+
+pub fn mangle_name(module_name: &str, name: &str) -> &'static str {
+    if name == "main" {
+        "main"
+    } else {
+        let mangled = format!("{}__{}", module_name.replace("::", "_"), name);
+        Box::leak(mangled.into_boxed_str())
+    }
+}
+
 pub struct SemaContext<'a> {
     scopes: Vec<HashMap<&'a str, (Type, bool)>>,
-    functions: HashMap<&'a str, (Vec<Type>, Type)>,
+    functions: HashMap<&'static str, (Vec<Type>, Type)>,
     pub structs: HashMap<String, Vec<(String, Type)>>,
     current_ret_type: Option<Type>,
     loop_depth: usize,
+    pub imports: HashMap<String, Vec<String>>,
+    pub all_structs: Vec<StructMeta<'a>>,
+    pub all_functions: Vec<FunctionMeta<'a>>,
+    pub current_module: String,
 }
 
 impl<'a> SemaContext<'a> {
@@ -165,6 +193,10 @@ impl<'a> SemaContext<'a> {
             structs: HashMap::new(),
             current_ret_type: None,
             loop_depth: 0,
+            imports: HashMap::new(),
+            all_structs: Vec::new(),
+            all_functions: Vec::new(),
+            current_module: String::new(),
         }
     }
 
@@ -190,38 +222,166 @@ impl<'a> SemaContext<'a> {
         }
         None
     }
+
+    pub fn resolve_type(&self, ty: Type) -> Result<Type, String> {
+        match ty {
+            Type::Ref { is_mut, ty } => {
+                let resolved_inner = self.resolve_type(*ty)?;
+                Ok(Type::Ref { is_mut, ty: Box::new(resolved_inner) })
+            }
+            Type::Struct(name) => {
+                self.resolve_struct_type(&name)
+            }
+            other => Ok(other),
+        }
+    }
+
+    pub fn resolve_struct_type(&self, name: &str) -> Result<Type, String> {
+        if name == "i64" || name == "f64" || name == "bool" || name == "void" {
+            return Ok(match name {
+                "i64" => Type::I64,
+                "f64" => Type::F64,
+                "bool" => Type::Bool,
+                _ => Type::Void,
+            });
+        }
+        if let Some(meta) = self.lookup_struct_meta(name) {
+            let mangled = mangle_name(&meta.module_name, name);
+            Ok(Type::Struct(mangled.to_string()))
+        } else {
+            Err(format!("Struct '{}' not found or is private in module '{}'", name, self.current_module))
+        }
+    }
+
+    fn lookup_struct_meta(&self, name: &str) -> Option<&StructMeta<'a>> {
+        if let Some(meta) = self.all_structs.iter().find(|s| s.original_name == name && s.module_name == self.current_module) {
+            return Some(meta);
+        }
+        let empty = Vec::new();
+        let imps = self.imports.get(&self.current_module).unwrap_or(&empty);
+        for imp in imps {
+            if let Some(meta) = self.all_structs.iter().find(|s| s.original_name == name && s.module_name == *imp && s.is_pub) {
+                return Some(meta);
+            }
+        }
+        None
+    }
+
+    pub fn resolve_function(&self, name: &str) -> Result<&FunctionMeta<'a>, String> {
+        if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == name && f.module_name == self.current_module) {
+            return Ok(meta);
+        }
+        let empty = Vec::new();
+        let imps = self.imports.get(&self.current_module).unwrap_or(&empty);
+        for imp in imps {
+            if let Some(meta) = self.all_functions.iter().find(|f| f.original_name == name && f.module_name == *imp && f.is_pub) {
+                return Ok(meta);
+            }
+        }
+        Err(format!("Function '{}' not found or is private in module '{}'", name, self.current_module))
+    }
 }
 
 pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, String> {
     let mut ctx = SemaContext::new();
     
-    // Register all structs first
-    let mut structs = Vec::new();
+    // Register metadata
+    ctx.imports = program.imports;
+    
+    // First pass: populate raw structs
     for s in &program.structs {
         let mut fields = Vec::new();
-        let mut sema_fields = Vec::new();
         for f in &s.fields {
             let f_ty = Type::from(f.ty.clone());
-            fields.push((f.name.to_string(), f_ty.clone()));
-            sema_fields.push(Param { name: f.name, ty: f_ty });
+            fields.push((f.name.to_string(), f_ty));
         }
-        ctx.structs.insert(s.name.to_string(), fields);
-        structs.push(StructDef { name: s.name, fields: sema_fields });
+        ctx.all_structs.push(StructMeta {
+            original_name: s.name,
+            module_name: s.module_name.clone(),
+            is_pub: s.is_pub,
+            fields,
+        });
     }
 
+    // First pass: populate raw functions
     for f in &program.functions {
         let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty.clone())).collect();
-        ctx.functions.insert(f.name, (param_tys, Type::from(f.ret_type.clone())));
+        let ret_ty = Type::from(f.ret_type.clone());
+        ctx.all_functions.push(FunctionMeta {
+            original_name: f.name,
+            module_name: f.module_name.clone(),
+            is_pub: f.is_pub,
+            param_types: param_tys,
+            ret_type: ret_ty,
+        });
+    }
+
+    // Resolve all struct field types
+    let mut resolved_structs = Vec::new();
+    for s in &ctx.all_structs {
+        ctx.current_module = s.module_name.clone();
+        let mut resolved_fields = Vec::new();
+        for (f_name, f_ty) in &s.fields {
+            let res_ty = ctx.resolve_type(f_ty.clone())?;
+            resolved_fields.push((f_name.clone(), res_ty));
+        }
+        resolved_structs.push((s.module_name.clone(), s.original_name.to_string(), resolved_fields));
+    }
+    
+    // Update all_structs with resolved field types, and populate ctx.structs by their mangled names!
+    for (mod_name, orig_name, fields) in resolved_structs {
+        let mangled = mangle_name(&mod_name, &orig_name);
+        ctx.structs.insert(mangled.to_string(), fields.clone());
+        if let Some(meta) = ctx.all_structs.iter_mut().find(|s| s.original_name == orig_name && s.module_name == mod_name) {
+            meta.fields = fields;
+        }
+    }
+
+    // Resolve all function signature types
+    let mut resolved_functions = Vec::new();
+    for f in &ctx.all_functions {
+        ctx.current_module = f.module_name.clone();
+        let mut resolved_params = Vec::new();
+        for p_ty in &f.param_types {
+            resolved_params.push(ctx.resolve_type(p_ty.clone())?);
+        }
+        let resolved_ret = ctx.resolve_type(f.ret_type.clone())?;
+        resolved_functions.push((f.module_name.clone(), f.original_name.to_string(), resolved_params, resolved_ret));
+    }
+    
+    // Update all_functions with resolved signature types, and populate ctx.functions by their mangled names!
+    for (mod_name, orig_name, params, ret) in resolved_functions {
+        let mangled = mangle_name(&mod_name, &orig_name);
+        ctx.functions.insert(mangled, (params.clone(), ret.clone()));
+        if let Some(meta) = ctx.all_functions.iter_mut().find(|f| f.original_name == orig_name && f.module_name == mod_name) {
+            meta.param_types = params;
+            meta.ret_type = ret;
+        }
+    }
+
+    let mut structs = Vec::new();
+    for s in &program.structs {
+        ctx.current_module = s.module_name.clone();
+        let mangled = mangle_name(&s.module_name, s.name);
+        let fields = ctx.structs.get(mangled).unwrap().clone();
+        let sema_fields = fields.into_iter().map(|(n, ty)| {
+            let orig_f = s.fields.iter().find(|of| of.name == n).unwrap();
+            Param { name: orig_f.name, ty }
+        }).collect();
+        structs.push(StructDef { name: mangled, fields: sema_fields });
     }
 
     let mut functions = Vec::new();
     for f in program.functions {
+        ctx.current_module = f.module_name.clone();
         ctx.push_scope();
-        ctx.current_ret_type = Some(Type::from(f.ret_type.clone()));
+        
+        let mangled = mangle_name(&f.module_name, f.name);
+        let (param_tys, ret_ty) = ctx.functions.get(mangled).unwrap().clone();
+        ctx.current_ret_type = Some(ret_ty.clone());
 
         let mut params = Vec::new();
-        for p in &f.params {
-            let ty = Type::from(p.ty.clone());
+        for (p, ty) in f.params.iter().zip(param_tys) {
             ctx.declare_var(p.name, ty.clone(), true);
             params.push(Param { name: p.name, ty });
         }
@@ -231,9 +391,9 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
         ctx.current_ret_type = None;
 
         functions.push(Function {
-            name: f.name,
+            name: mangled,
             params,
-            ret_type: Type::from(f.ret_type.clone()),
+            ret_type: ret_ty,
             body,
         });
     }
@@ -468,8 +628,9 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             })
         }
         crate::hir::Expr::Call { name, args } => {
-            let (param_tys, ret_ty) = ctx.functions.get(name)
-                .ok_ok_or_else(|| format!("Function '{}' not found in scope", name))?.clone();
+            let meta = ctx.resolve_function(name)?;
+            let mangled = mangle_name(&meta.module_name, name);
+            let (param_tys, ret_ty) = ctx.functions.get(mangled).unwrap().clone();
             
             if args.len() != param_tys.len() {
                 return Err(format!("Function '{}' expects {} arguments, found {}", name, param_tys.len(), args.len()));
@@ -485,13 +646,14 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             }
  
             Ok(TypedExpr {
-                kind: ExprKind::Call { name, args: typed_args },
+                kind: ExprKind::Call { name: mangled, args: typed_args },
                 ty: ret_ty,
             })
         }
         crate::hir::Expr::As { expr, ty } => {
             let typed_expr = check_expr(ctx, *expr)?;
-            let dest_ty = Type::from(ty);
+            let raw_dest_ty = Type::from(ty);
+            let dest_ty = ctx.resolve_type(raw_dest_ty)?;
             
             // Check casting validity
             let valid = match (&typed_expr.ty, &dest_ty) {
@@ -549,8 +711,9 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             }
         }
         crate::hir::Expr::StructLiteral { name, fields } => {
-            let struct_fields = ctx.structs.get(name)
-                .ok_ok_or_else(|| format!("Struct '{}' not defined", name))?.clone();
+            let resolved_ty = ctx.resolve_struct_type(name)?;
+            let Type::Struct(mangled_name) = &resolved_ty else { unreachable!() };
+            let struct_fields = ctx.structs.get(mangled_name).unwrap().clone();
             
             if fields.len() != struct_fields.len() {
                 return Err(format!("Struct '{}' expects {} fields, found {}", name, struct_fields.len(), fields.len()));
@@ -568,8 +731,8 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
             }
             
             Ok(TypedExpr {
-                kind: ExprKind::StructLiteral { name, fields: checked_fields },
-                ty: Type::Struct(name.to_string()),
+                kind: ExprKind::StructLiteral { name: mangled_name.clone(), fields: checked_fields },
+                ty: resolved_ty,
             })
         }
         crate::hir::Expr::FieldAccess { expr, field } => {
