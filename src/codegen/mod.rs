@@ -27,7 +27,7 @@ impl<'ctx> Codegen<'ctx> {
         // Pre-register all function signatures first to support mutual/forward calls
         for f in &program.functions {
             let param_types: Vec<BasicTypeEnum<'ctx>> = f.params.iter()
-                .map(|(_, ty)| self.get_llvm_type(*ty))
+                .map(|(_, ty)| self.get_llvm_type(ty.clone()))
                 .collect();
             
             let inkwell_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = param_types.iter()
@@ -37,7 +37,7 @@ impl<'ctx> Codegen<'ctx> {
             let fn_type = if f.ret_type == Type::Void {
                 self.context.void_type().fn_type(&inkwell_param_types, false)
             } else {
-                self.get_llvm_type(f.ret_type).fn_type(&inkwell_param_types, false)
+                self.get_llvm_type(f.ret_type.clone()).fn_type(&inkwell_param_types, false)
             };
 
             self.module.add_function(f.name, fn_type, None);
@@ -55,6 +55,10 @@ impl<'ctx> Codegen<'ctx> {
             Type::F64 => self.context.f64_type().as_basic_type_enum(),
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Void => panic!("Void type cannot be converted to BasicTypeEnum"),
+            Type::Ref { ty, .. } => {
+                let inner = self.get_llvm_type(*ty);
+                inner.ptr_type(inkwell::AddressSpace::default()).as_basic_type_enum()
+            }
         }
     }
 
@@ -70,7 +74,7 @@ impl<'ctx> Codegen<'ctx> {
 
         // Allocate and store function parameters
         for (i, (name, ty)) in f.params.iter().enumerate() {
-            let llvm_ty = self.get_llvm_type(*ty);
+            let llvm_ty = self.get_llvm_type(ty.clone());
             let ptr = self.builder.build_alloca(llvm_ty, name).unwrap();
             let val = fn_val.get_nth_param(i as u32).unwrap();
             self.builder.build_store(ptr, val).unwrap();
@@ -79,7 +83,7 @@ impl<'ctx> Codegen<'ctx> {
 
         // Allocate local variables and temporaries
         for (i, ty) in f.vars.iter().enumerate() {
-            let llvm_ty = self.get_llvm_type(*ty);
+            let llvm_ty = self.get_llvm_type(ty.clone());
             let ptr = self.builder.build_alloca(llvm_ty, &format!("var_{}", i)).unwrap();
             var_ptrs.insert(mir::VarId(i), ptr);
         }
@@ -105,13 +109,29 @@ impl<'ctx> Codegen<'ctx> {
                 match stmt {
                     mir::Statement::Assign(var_id, rvalue) => {
                         let ptr = *var_ptrs.get(&var_id).unwrap();
-                        let val = self.compile_rvalue(&rvalue, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                        let dest_ty = f.vars[var_id.0].clone();
+                        let val = self.compile_rvalue(&rvalue, dest_ty, &var_ptrs, &param_ptrs, &f.vars, &f.params);
                         self.builder.build_store(ptr, val).unwrap();
                     }
                     mir::Statement::AssignVar(name, operand) => {
                         let ptr = *param_ptrs.get(name).unwrap();
                         let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
                         self.builder.build_store(ptr, val).unwrap();
+                    }
+                    mir::Statement::Store(var_id, operand) => {
+                        let stack_ptr = *var_ptrs.get(&var_id).unwrap();
+                        let ptr_val_ty = self.get_llvm_type(f.vars[var_id.0].clone());
+                        let ptr_val = self.builder.build_load(ptr_val_ty, stack_ptr, "load_ptr_val").unwrap().into_pointer_value();
+                        let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                        self.builder.build_store(ptr_val, val).unwrap();
+                    }
+                    mir::Statement::StoreVar(name, operand) => {
+                        let stack_ptr = *param_ptrs.get(name).unwrap();
+                        let param_ty = f.params.iter().find(|(n, _)| *n == name).map(|(_, t)| t.clone()).unwrap();
+                        let ptr_val_ty = self.get_llvm_type(param_ty);
+                        let ptr_val = self.builder.build_load(ptr_val_ty, stack_ptr, "load_param_ptr_val").unwrap().into_pointer_value();
+                        let val = self.compile_operand(&operand, &var_ptrs, &param_ptrs, &f.vars, &f.params);
+                        self.builder.build_store(ptr_val, val).unwrap();
                     }
                 }
             }
@@ -162,12 +182,12 @@ impl<'ctx> Codegen<'ctx> {
             }
             mir::Operand::Var(vid) => {
                 let ptr = *var_ptrs.get(vid).unwrap();
-                let ty = self.get_llvm_type(vars[vid.0]);
+                let ty = self.get_llvm_type(vars[vid.0].clone());
                 self.builder.build_load(ty, ptr, &format!("load_var_{}", vid.0)).unwrap()
             }
             mir::Operand::Ident(name) => {
                 let ptr = *param_ptrs.get(name).unwrap();
-                let param_ty = params.iter().find(|(n, _)| *n == *name).map(|(_, t)| *t).unwrap();
+                let param_ty = params.iter().find(|(n, _)| *n == *name).map(|(_, t)| t.clone()).unwrap();
                 let ty = self.get_llvm_type(param_ty);
                 self.builder.build_load(ty, ptr, &format!("load_param_{}", name)).unwrap()
             }
@@ -177,6 +197,7 @@ impl<'ctx> Codegen<'ctx> {
     fn compile_rvalue(
         &self,
         rvalue: &mir::Rvalue<'ctx>,
+        dest_ty: Type,
         var_ptrs: &HashMap<mir::VarId, PointerValue<'ctx>>,
         param_ptrs: &HashMap<&str, PointerValue<'ctx>>,
         vars: &[Type],
@@ -264,11 +285,11 @@ impl<'ctx> Codegen<'ctx> {
             mir::Rvalue::As(op, dest_ty) => {
                 let val = self.compile_operand(op, var_ptrs, param_ptrs, vars, params);
                 let src_ty = match op {
-                    mir::Operand::Var(vid) => vars[vid.0],
+                    mir::Operand::Var(vid) => vars[vid.0].clone(),
                     mir::Operand::Int(_) => Type::I64,
                     mir::Operand::Float(_) => Type::F64,
                     mir::Operand::Bool(_) => Type::Bool,
-                    mir::Operand::Ident(name) => params.iter().find(|(n, _)| *n == *name).map(|(_, t)| *t).unwrap(),
+                    mir::Operand::Ident(name) => params.iter().find(|(n, _)| *n == *name).map(|(_, t)| t.clone()).unwrap(),
                 };
                 
                 match (src_ty, dest_ty) {
@@ -280,6 +301,19 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     _ => val,
                 }
+            }
+            mir::Rvalue::Ref(_is_mut, var_id) => {
+                let ptr = *var_ptrs.get(var_id).unwrap();
+                ptr.into()
+            }
+            mir::Rvalue::RefVar(_is_mut, name) => {
+                let ptr = *param_ptrs.get(name).unwrap();
+                ptr.into()
+            }
+            mir::Rvalue::Deref(op) => {
+                let ptr_val = self.compile_operand(op, var_ptrs, param_ptrs, vars, params).into_pointer_value();
+                let llvm_dest_ty = self.get_llvm_type(dest_ty);
+                self.builder.build_load(llvm_dest_ty, ptr_val, "deref_val").unwrap()
             }
         }
     }
