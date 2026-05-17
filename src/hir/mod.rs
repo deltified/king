@@ -3,6 +3,7 @@ pub mod ast {
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct Program<'a> {
+        pub structs: Vec<StructDef<'a>>,
         pub functions: Vec<Function<'a>>,
     }
 
@@ -22,6 +23,25 @@ pub mod ast {
             is_mut: bool,
             ty: Box<HirType>,
         },
+        Struct(String),
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct FieldDef<'a> {
+        pub name: &'a str,
+        pub ty: HirType,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct StructDef<'a> {
+        pub name: &'a str,
+        pub fields: Vec<FieldDef<'a>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct FieldInit<'a> {
+        pub name: &'a str,
+        pub value: Expr<'a>,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +67,11 @@ pub mod ast {
         Assign {
             name: &'a str,
             is_deref: bool,
+            value: Expr<'a>,
+        },
+        AssignField {
+            expr: Expr<'a>,
+            field: &'a str,
             value: Expr<'a>,
         },
         Expr(Expr<'a>),
@@ -92,12 +117,21 @@ pub mod ast {
             expr: Box<Expr<'a>>,
         },
         Deref(Box<Expr<'a>>),
+        StructLiteral {
+            name: &'a str,
+            fields: Vec<FieldInit<'a>>,
+        },
+        FieldAccess {
+            expr: Box<Expr<'a>>,
+            field: &'a str,
+        },
     }
 }
 
 pub use ast::*;
 
 pub fn build<'a>(program: crate::parser::Program<'a>) -> Program<'a> {
+    let mut structs = Vec::new();
     let mut functions = Vec::new();
     for stmt in program.statements {
         match stmt {
@@ -110,10 +144,17 @@ pub fn build<'a>(program: crate::parser::Program<'a>) -> Program<'a> {
                 let body = build_block(body);
                 functions.push(Function { name, params, ret_type, body });
             }
+            crate::parser::Statement::StructDef { name, fields } => {
+                let fields = fields.into_iter().map(|f| FieldDef {
+                    name: f.name,
+                    ty: lower_type(f.ty),
+                }).collect();
+                structs.push(StructDef { name, fields });
+            }
             _ => {}
         }
     }
-    Program { functions }
+    Program { structs, functions }
 }
 
 fn lower_type(ty: crate::parser::Type) -> HirType {
@@ -122,7 +163,7 @@ fn lower_type(ty: crate::parser::Type) -> HirType {
             "i64" => HirType::I64,
             "f64" => HirType::F64,
             "bool" => HirType::Bool,
-            _ => HirType::Void,
+            other => HirType::Struct(other.to_string()),
         },
         crate::parser::Type::Ref { is_mut, ty } => HirType::Ref {
             is_mut,
@@ -148,6 +189,11 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
             is_deref,
             value: build_expr(value),
         },
+        crate::parser::Statement::AssignField { expr, field, value } => Statement::AssignField {
+            expr: build_expr(expr),
+            field,
+            value: build_expr(value),
+        },
         crate::parser::Statement::Expr(expr) => Statement::Expr(build_expr(expr)),
         crate::parser::Statement::Return(opt_expr) => Statement::Return(opt_expr.map(build_expr)),
         crate::parser::Statement::If { cond, then_block, else_block } => Statement::If {
@@ -161,8 +207,8 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
         },
         crate::parser::Statement::Break => Statement::Break,
         crate::parser::Statement::Continue => Statement::Continue,
-        crate::parser::Statement::Function { .. } => {
-            panic!("Nested functions not supported in HIR builder");
+        crate::parser::Statement::StructDef { .. } | crate::parser::Statement::Function { .. } => {
+            panic!("Nested items not supported in HIR builder");
         }
     }
 }
@@ -195,5 +241,16 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
             expr: Box::new(build_expr(*expr)),
         },
         crate::parser::Expr::Deref(expr) => Expr::Deref(Box::new(build_expr(*expr))),
+        crate::parser::Expr::StructLiteral { name, fields } => {
+            let fields = fields.into_iter().map(|f| FieldInit {
+                name: f.name,
+                value: build_expr(f.value),
+            }).collect();
+            Expr::StructLiteral { name, fields }
+        }
+        crate::parser::Expr::FieldAccess { expr, field } => Expr::FieldAccess {
+            expr: Box::new(build_expr(*expr)),
+            field,
+        },
     }
 }
