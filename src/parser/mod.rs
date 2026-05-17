@@ -20,11 +20,12 @@ pub enum ParseError<'a> {
 pub struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     pos: usize,
+    struct_literal_allowed: bool,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token<'a>>) -> Self {
-        Self { tokens, pos: 0 }
+        Self { tokens, pos: 0, struct_literal_allowed: true }
     }
 
     fn peek(&self) -> Option<&Token<'a>> {
@@ -214,7 +215,11 @@ impl<'a> Parser<'a> {
             }
             Some(Token::If) => {
                 self.advance(); // consume 'if'
-                let cond = self.parse_expr(0)?;
+                let old_allowed = self.struct_literal_allowed;
+                self.struct_literal_allowed = false;
+                let cond = self.parse_expr(0);
+                self.struct_literal_allowed = old_allowed;
+                let cond = cond?;
                 self.consume(Token::LBrace, "{")?;
                 let mut then_block = Vec::new();
                 while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
@@ -243,7 +248,11 @@ impl<'a> Parser<'a> {
             }
             Some(Token::While) => {
                 self.advance(); // consume 'while'
-                let cond = self.parse_expr(0)?;
+                let old_allowed = self.struct_literal_allowed;
+                self.struct_literal_allowed = false;
+                let cond = self.parse_expr(0);
+                self.struct_literal_allowed = old_allowed;
+                let cond = cond?;
                 self.consume(Token::LBrace, "{")?;
                 let mut body = Vec::new();
                 while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
@@ -473,7 +482,7 @@ impl<'a> Parser<'a> {
                     }
                     self.consume(Token::RParen, ")")?;
                     Ok(Expr::Call { name: full_name, args })
-                } else if self.peek() == Some(&Token::LBrace) {
+                } else if self.struct_literal_allowed && self.peek() == Some(&Token::LBrace) {
                     self.advance(); // consume '{'
                     let mut fields = Vec::new();
                     if self.peek() != Some(&Token::RBrace) {
