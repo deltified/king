@@ -35,6 +35,7 @@ pub mod ast {
         AssignVar(&'a str, Operand<'a>),
         Store(VarId, Operand<'a>),
         StoreVar(&'a str, Operand<'a>),
+        Call(&'a str, Vec<Operand<'a>>),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -310,17 +311,22 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
             ));
             Operand::Var(temp_var)
         }
-        crate::sema::ast::ExprKind::Call { name, args } => {
+         crate::sema::ast::ExprKind::Call { name, args } => {
             let mut arg_ops = Vec::new();
             for arg in args {
                 arg_ops.push(compile_expr(ctx, arg));
             }
-            let temp_var = ctx.declare_temp(expr.ty);
-            ctx.push_statement(Statement::Assign(
-                temp_var,
-                Rvalue::Call(name, arg_ops),
-            ));
-            Operand::Var(temp_var)
+            if expr.ty == Type::Void {
+                ctx.push_statement(Statement::Call(name, arg_ops));
+                Operand::Int(0)
+            } else {
+                let temp_var = ctx.declare_temp(expr.ty);
+                ctx.push_statement(Statement::Assign(
+                    temp_var,
+                    Rvalue::Call(name, arg_ops),
+                ));
+                Operand::Var(temp_var)
+            }
         }
         crate::sema::ast::ExprKind::As { expr: sub_expr, ty } => {
             let sub_op = compile_expr(ctx, *sub_expr);
