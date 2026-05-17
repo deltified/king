@@ -3,6 +3,7 @@ mod parser;
 mod hir;
 mod sema;
 mod mir;
+mod codegen;
 
 use lexer::Lexer;
 use lexer::Token;
