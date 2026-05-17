@@ -200,6 +200,8 @@ pub struct SemaContext<'a> {
     pub all_structs: Vec<StructMeta<'a>>,
     pub all_functions: Vec<FunctionMeta<'a>>,
     pub current_module: String,
+    pub generic_templates: HashMap<String, crate::hir::Function<'a>>,
+    pub monomorphized_functions: Vec<Function<'a>>,
 }
 
 impl<'a> SemaContext<'a> {
@@ -214,6 +216,8 @@ impl<'a> SemaContext<'a> {
             all_structs: Vec::new(),
             all_functions: Vec::new(),
             current_module: String::new(),
+            generic_templates: HashMap::new(),
+            monomorphized_functions: Vec::new(),
         }
     }
 
@@ -346,17 +350,23 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
     }
 
     // First pass: populate raw functions
-    for f in &program.functions {
-        let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty.clone())).collect();
-        let ret_ty = Type::from(f.ret_type.clone());
-        ctx.all_functions.push(FunctionMeta {
-            original_name: f.name,
-            module_name: f.module_name.clone(),
-            is_pub: f.is_pub,
-            is_extern: false,
-            param_types: param_tys,
-            ret_type: ret_ty,
-        });
+    let mut normal_functions = Vec::new();
+    for f in program.functions {
+        if !f.generics.is_empty() {
+            ctx.generic_templates.insert(f.name.to_string(), f);
+        } else {
+            let param_tys: Vec<Type> = f.params.iter().map(|p| Type::from(p.ty.clone())).collect();
+            let ret_ty = Type::from(f.ret_type.clone());
+            ctx.all_functions.push(FunctionMeta {
+                original_name: f.name,
+                module_name: f.module_name.clone(),
+                is_pub: f.is_pub,
+                is_extern: false,
+                param_types: param_tys,
+                ret_type: ret_ty,
+            });
+            normal_functions.push(f);
+        }
     }
 
     for f in &program.extern_functions {
@@ -429,7 +439,7 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
     }
 
     let mut functions = Vec::new();
-    for f in program.functions {
+    for f in normal_functions {
         ctx.current_module = f.module_name.clone();
         ctx.push_scope();
         
@@ -454,6 +464,9 @@ pub fn analyze<'a>(program: crate::hir::Program<'a>) -> Result<Program<'a>, Stri
             body,
         });
     }
+
+    let monomorphized = std::mem::take(&mut ctx.monomorphized_functions);
+    functions.extend(monomorphized);
 
     let mut extern_functions = Vec::new();
     for f in &program.extern_functions {
@@ -610,6 +623,14 @@ fn check_statement<'a>(ctx: &mut SemaContext<'a>, stmt: crate::hir::Statement<'a
             }
             Ok(Statement::Continue)
         }
+        crate::hir::Statement::Comptime(block) => {
+            let mut env = HashMap::new();
+            eval_comptime_block(&block, &mut env, ctx)?;
+            Ok(Statement::Expr(TypedExpr {
+                kind: ExprKind::Int(0),
+                ty: Type::Void,
+            }))
+        }
     }
 }
 
@@ -704,15 +725,92 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                 ty: res_ty,
             })
         }
-        crate::hir::Expr::Call { name, args } => {
-            let meta = ctx.resolve_function(name)?;
-            let mangled = mangle_name(&meta.module_name, meta.original_name, meta.is_extern);
-            let (param_tys, ret_ty) = ctx.functions.get(mangled).unwrap().clone();
+        crate::hir::Expr::Call { name, type_args, args } => {
+            let opt_template = resolve_generic_template(ctx, name).cloned();
+            let (mangled_name, param_tys, ret_ty) = if let Some(template) = opt_template {
+                let mut resolved_type_args = Vec::new();
+                for t in &type_args {
+                    let resolved = ctx.resolve_type(Type::from(t.clone()))?;
+                    resolved_type_args.push(resolved);
+                }
+                
+                if resolved_type_args.len() != template.generics.len() {
+                    return Err(format!("Generic function '{}' expects {} type arguments, found {}", name, template.generics.len(), resolved_type_args.len()));
+                }
+
+                let mangled_mono_name = get_mangled_mono_name(template.name, &resolved_type_args);
+                
+                if !ctx.functions.contains_key(mangled_mono_name.as_str()) {
+                    let mut mapping = HashMap::new();
+                    let hir_type_args: Vec<crate::hir::HirType> = resolved_type_args.iter().map(type_to_hir).collect();
+                    for (i, gen_param) in template.generics.iter().enumerate() {
+                        mapping.insert(*gen_param, &hir_type_args[i]);
+                    }
+                    
+                    let sub_params = template.params.iter().map(|p| crate::hir::Param {
+                        name: p.name,
+                        ty: substitute_type(&p.ty, &mapping),
+                    }).collect::<Vec<_>>();
+                    
+                    let sub_ret = substitute_type(&template.ret_type, &mapping);
+                    let sub_body = substitute_block(template.body.clone(), &mapping);
+                    
+                    let sema_param_tys: Vec<Type> = sub_params.iter().map(|p| Type::from(p.ty.clone())).collect();
+                    let sema_ret = Type::from(sub_ret.clone());
+                    
+                    ctx.functions.insert(
+                        Box::leak(mangled_mono_name.clone().into_boxed_str()),
+                        (sema_param_tys.clone(), sema_ret.clone()),
+                    );
+                    
+                    ctx.all_functions.push(FunctionMeta {
+                        original_name: Box::leak(mangled_mono_name.clone().into_boxed_str()),
+                        module_name: template.module_name.clone(),
+                        is_pub: template.is_pub,
+                        is_extern: false,
+                        param_types: sema_param_tys.clone(),
+                        ret_type: sema_ret.clone(),
+                    });
+                    
+                    let old_ret_type = ctx.current_ret_type.clone();
+                    let old_module = ctx.current_module.clone();
+                    
+                    ctx.current_ret_type = Some(sema_ret.clone());
+                    ctx.current_module = template.module_name.clone();
+                    ctx.push_scope();
+                    
+                    let mut params = Vec::new();
+                    for (p, ty) in sub_params.iter().zip(&sema_param_tys) {
+                        ctx.declare_var(p.name, ty.clone(), true);
+                        params.push(Param { name: p.name, ty: ty.clone() });
+                    }
+                    
+                    let body = check_block(ctx, sub_body)?;
+                    ctx.pop_scope();
+                    ctx.current_ret_type = old_ret_type;
+                    ctx.current_module = old_module;
+                    
+                    ctx.monomorphized_functions.push(Function {
+                        name: Box::leak(mangled_mono_name.clone().into_boxed_str()),
+                        params,
+                        ret_type: sema_ret,
+                        body,
+                    });
+                }
+                
+                let (param_tys, ret_ty) = ctx.functions.get(mangled_mono_name.as_str()).unwrap().clone();
+                (mangled_mono_name, param_tys, ret_ty)
+            } else {
+                let meta = ctx.resolve_function(name)?;
+                let mangled = mangle_name(&meta.module_name, meta.original_name, meta.is_extern);
+                let (param_tys, ret_ty) = ctx.functions.get(mangled).unwrap().clone();
+                (mangled.to_string(), param_tys, ret_ty)
+            };
             
             if args.len() != param_tys.len() {
                 return Err(format!("Function '{}' expects {} arguments, found {}", name, param_tys.len(), args.len()));
             }
- 
+
             let mut typed_args = Vec::new();
             for (arg, expected_ty) in args.into_iter().zip(param_tys) {
                 let typed_arg = check_expr(ctx, arg)?;
@@ -721,9 +819,12 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                 }
                 typed_args.push(typed_arg);
             }
- 
+
             Ok(TypedExpr {
-                kind: ExprKind::Call { name: mangled, args: typed_args },
+                kind: ExprKind::Call {
+                    name: Box::leak(mangled_name.into_boxed_str()),
+                    args: typed_args,
+                },
                 ty: ret_ty,
             })
         }
@@ -930,4 +1031,365 @@ pub fn get_type_id(ty: &Type) -> i64 {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComptimeVal {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+    Type(Type),
+    Void,
+}
+
+pub fn type_to_hir(ty: &Type) -> crate::hir::HirType {
+    match ty {
+        Type::Void => crate::hir::HirType::Void,
+        Type::I64 => crate::hir::HirType::I64,
+        Type::F64 => crate::hir::HirType::F64,
+        Type::Bool => crate::hir::HirType::Bool,
+        Type::Char => crate::hir::HirType::Char,
+        Type::Str => crate::hir::HirType::Str,
+        Type::TypeVal => crate::hir::HirType::TypeVal,
+        Type::Ref { is_mut, ty } => crate::hir::HirType::Ref {
+            is_mut: *is_mut,
+            ty: Box::new(type_to_hir(ty)),
+        },
+        Type::Struct(name) => crate::hir::HirType::Struct(name.clone()),
+    }
+}
+
+pub fn substitute_type(ty: &crate::hir::HirType, mapping: &HashMap<&str, &crate::hir::HirType>) -> crate::hir::HirType {
+    match ty {
+        crate::hir::HirType::Struct(name) => {
+            if let Some(concrete) = mapping.get(name.as_str()) {
+                (*concrete).clone()
+            } else {
+                ty.clone()
+            }
+        }
+        crate::hir::HirType::Ref { is_mut, ty: inner } => {
+            crate::hir::HirType::Ref {
+                is_mut: *is_mut,
+                ty: Box::new(substitute_type(inner, mapping)),
+            }
+        }
+        other => other.clone(),
+    }
+}
+
+pub fn substitute_statement<'a>(
+    stmt: crate::hir::Statement<'a>,
+    mapping: &HashMap<&str, &crate::hir::HirType>,
+) -> crate::hir::Statement<'a> {
+    match stmt {
+        crate::hir::Statement::Let { name, is_mut, value } => crate::hir::Statement::Let {
+            name,
+            is_mut,
+            value: substitute_expr(value, mapping),
+        },
+        crate::hir::Statement::Assign { name, is_deref, value } => crate::hir::Statement::Assign {
+            name,
+            is_deref,
+            value: substitute_expr(value, mapping),
+        },
+        crate::hir::Statement::AssignField { expr, field, value } => crate::hir::Statement::AssignField {
+            expr: substitute_expr(expr, mapping),
+            field,
+            value: substitute_expr(value, mapping),
+        },
+        crate::hir::Statement::Expr(expr) => crate::hir::Statement::Expr(substitute_expr(expr, mapping)),
+        crate::hir::Statement::Return(opt_expr) => crate::hir::Statement::Return(opt_expr.map(|e| substitute_expr(e, mapping))),
+        crate::hir::Statement::If { cond, then_block, else_block } => crate::hir::Statement::If {
+            cond: substitute_expr(cond, mapping),
+            then_block: substitute_block(then_block, mapping),
+            else_block: else_block.map(|b| substitute_block(b, mapping)),
+        },
+        crate::hir::Statement::While { cond, body } => crate::hir::Statement::While {
+            cond: substitute_expr(cond, mapping),
+            body: substitute_block(body, mapping),
+        },
+        crate::hir::Statement::Comptime(body) => crate::hir::Statement::Comptime(substitute_block(body, mapping)),
+        other => other,
+    }
+}
+
+pub fn substitute_block<'a>(
+    block: crate::hir::Block<'a>,
+    mapping: &HashMap<&str, &crate::hir::HirType>,
+) -> crate::hir::Block<'a> {
+    crate::hir::Block {
+        statements: block.statements.into_iter().map(|s| substitute_statement(s, mapping)).collect(),
+    }
+}
+
+pub fn substitute_expr<'a>(
+    expr: crate::hir::Expr<'a>,
+    mapping: &HashMap<&str, &crate::hir::HirType>,
+) -> crate::hir::Expr<'a> {
+    match expr {
+        crate::hir::Expr::Binary { op, lhs, rhs } => crate::hir::Expr::Binary {
+            op,
+            lhs: Box::new(substitute_expr(*lhs, mapping)),
+            rhs: Box::new(substitute_expr(*rhs, mapping)),
+        },
+        crate::hir::Expr::Unary { op, expr } => crate::hir::Expr::Unary {
+            op,
+            expr: Box::new(substitute_expr(*expr, mapping)),
+        },
+        crate::hir::Expr::Call { name, type_args, args } => crate::hir::Expr::Call {
+            name,
+            type_args: type_args.into_iter().map(|t| substitute_type(&t, mapping)).collect(),
+            args: args.into_iter().map(|a| substitute_expr(a, mapping)).collect(),
+        },
+        crate::hir::Expr::As { expr, ty } => crate::hir::Expr::As {
+            expr: Box::new(substitute_expr(*expr, mapping)),
+            ty: substitute_type(&ty, mapping),
+        },
+        crate::hir::Expr::Is { expr, ty } => crate::hir::Expr::Is {
+            expr: Box::new(substitute_expr(*expr, mapping)),
+            ty: substitute_type(&ty, mapping),
+        },
+        crate::hir::Expr::BuiltinCall { name, args } => crate::hir::Expr::BuiltinCall {
+            name,
+            args: args.into_iter().map(|a| substitute_expr(a, mapping)).collect(),
+        },
+        crate::hir::Expr::Borrow { is_mut, expr } => crate::hir::Expr::Borrow {
+            is_mut,
+            expr: Box::new(substitute_expr(*expr, mapping)),
+        },
+        crate::hir::Expr::Deref(expr) => crate::hir::Expr::Deref(Box::new(substitute_expr(*expr, mapping))),
+        crate::hir::Expr::StructLiteral { name, fields } => {
+            let res_name = if let Some(crate::hir::HirType::Struct(n)) = mapping.get(name) {
+                Box::leak(n.clone().into_boxed_str())
+            } else {
+                name
+            };
+            crate::hir::Expr::StructLiteral {
+                name: res_name,
+                fields: fields.into_iter().map(|f| crate::hir::FieldInit {
+                    name: f.name,
+                    value: substitute_expr(f.value, mapping),
+                }).collect(),
+            }
+        }
+        crate::hir::Expr::FieldAccess { expr, field } => crate::hir::Expr::FieldAccess {
+            expr: Box::new(substitute_expr(*expr, mapping)),
+            field,
+        },
+        other => other,
+    }
+}
+
+pub fn get_mangled_mono_name(name: &str, type_args: &[Type]) -> String {
+    let mut res = name.to_string();
+    for t in type_args {
+        res.push('_');
+        match t {
+            Type::I64 => res.push_str("i64"),
+            Type::F64 => res.push_str("f64"),
+            Type::Bool => res.push_str("bool"),
+            Type::Char => res.push_str("char"),
+            Type::Str => res.push_str("str"),
+            Type::TypeVal => res.push_str("type"),
+            Type::Void => res.push_str("void"),
+            Type::Ref { is_mut, ty } => {
+                res.push_str(if *is_mut { "mutref_" } else { "ref_" });
+                res.push_str(&format!("{:?}", ty).to_lowercase().replace(":", "_").replace(" ", ""));
+            }
+            Type::Struct(s) => res.push_str(&s.to_lowercase().replace(":", "_").replace(" ", "")),
+        }
+    }
+    res
+}
+
+pub fn resolve_generic_template<'a, 'b>(
+    ctx: &'b SemaContext<'a>,
+    name: &str,
+) -> Option<&'b crate::hir::Function<'a>> {
+    if let Some(pos) = name.rfind("::") {
+        let mod_name = &name[..pos];
+        let func_name = &name[pos + 2..];
+        if let Some(f) = ctx.generic_templates.get(func_name) {
+            if f.module_name == mod_name && (f.module_name == ctx.current_module || f.is_pub) {
+                return Some(f);
+            }
+        }
+    }
+
+    if let Some(f) = ctx.generic_templates.get(name) {
+        if f.module_name == ctx.current_module {
+            return Some(f);
+        }
+    }
+
+    let empty = Vec::new();
+    let imps = ctx.imports.get(&ctx.current_module).unwrap_or(&empty);
+    for imp in imps {
+        if let Some(f) = ctx.generic_templates.get(name) {
+            if f.module_name == *imp && f.is_pub {
+                return Some(f);
+            }
+        }
+    }
+    None
+}
+
+pub fn eval_comptime_expr(
+    expr: &crate::hir::Expr,
+    env: &mut HashMap<String, ComptimeVal>,
+    ctx: &SemaContext,
+) -> Result<ComptimeVal, String> {
+    match expr {
+        crate::hir::Expr::Ident(name) => {
+            if let Some(val) = env.get(*name) {
+                Ok(val.clone())
+            } else if *name == "i64" || *name == "f64" || *name == "bool" || *name == "type" || *name == "str" {
+                let res_ty = ctx.resolve_struct_type(name)?;
+                Ok(ComptimeVal::Type(res_ty))
+            } else {
+                Err(format!("Compile-time variable '{}' not found in comptime scope", name))
+            }
+        }
+        crate::hir::Expr::Int(val) => Ok(ComptimeVal::Int(*val)),
+        crate::hir::Expr::Float(val) => Ok(ComptimeVal::Float(*val)),
+        crate::hir::Expr::Bool(val) => Ok(ComptimeVal::Bool(*val)),
+        crate::hir::Expr::Str(val) => Ok(ComptimeVal::Str(val.clone())),
+        crate::hir::Expr::Binary { op, lhs, rhs } => {
+            let left = eval_comptime_expr(lhs, env, ctx)?;
+            let right = eval_comptime_expr(rhs, env, ctx)?;
+            use crate::parser::BinOp;
+            match (op, left, right) {
+                (BinOp::Add, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Int(l + r)),
+                (BinOp::Sub, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Int(l - r)),
+                (BinOp::Mul, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Int(l * r)),
+                (BinOp::Div, ComptimeVal::Int(l), ComptimeVal::Int(r)) => {
+                    if r == 0 {
+                        Err("Division by zero at compile time".to_string())
+                    } else {
+                        Ok(ComptimeVal::Int(l / r))
+                    }
+                }
+                (BinOp::Eq, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l == r)),
+                (BinOp::Ne, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l != r)),
+                (BinOp::Lt, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l < r)),
+                (BinOp::Le, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l <= r)),
+                (BinOp::Gt, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l > r)),
+                (BinOp::Ge, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l >= r)),
+                (BinOp::Eq, ComptimeVal::Type(l), ComptimeVal::Type(r)) => Ok(ComptimeVal::Bool(l == r)),
+                (BinOp::Ne, ComptimeVal::Type(l), ComptimeVal::Type(r)) => Ok(ComptimeVal::Bool(l != r)),
+                (BinOp::Eq, ComptimeVal::Bool(l), ComptimeVal::Bool(r)) => Ok(ComptimeVal::Bool(l == r)),
+                (BinOp::Ne, ComptimeVal::Bool(l), ComptimeVal::Bool(r)) => Ok(ComptimeVal::Bool(l != r)),
+                _ => Err("Unsupported binary operation at compile time".to_string()),
+            }
+        }
+        crate::hir::Expr::Is { expr: sub_expr, ty } => {
+            let sub_val = eval_comptime_expr(sub_expr, env, ctx)?;
+            let ty_val = match sub_val {
+                ComptimeVal::Int(_) => Type::I64,
+                ComptimeVal::Float(_) => Type::F64,
+                ComptimeVal::Bool(_) => Type::Bool,
+                ComptimeVal::Str(_) => Type::Str,
+                ComptimeVal::Type(_) => Type::TypeVal,
+                _ => Type::Void,
+            };
+            let dest_ty = ctx.resolve_type(Type::from(ty.clone()))?;
+            Ok(ComptimeVal::Bool(ty_val == dest_ty))
+        }
+        crate::hir::Expr::BuiltinCall { name, args } => {
+            match *name {
+                "typeof" => {
+                    if args.len() != 1 {
+                        return Err(format!("@typeof expects 1 argument, found {}", args.len()));
+                    }
+                    let arg_val = eval_comptime_expr(&args[0], env, ctx)?;
+                    let ty_val = match arg_val {
+                        ComptimeVal::Int(_) => Type::I64,
+                        ComptimeVal::Float(_) => Type::F64,
+                        ComptimeVal::Bool(_) => Type::Bool,
+                        ComptimeVal::Str(_) => Type::Str,
+                        ComptimeVal::Type(_) => Type::TypeVal,
+                        _ => Type::Void,
+                    };
+                    Ok(ComptimeVal::Type(ty_val))
+                }
+                other => Err(format!("Unknown compile-time builtin @{}", other)),
+            }
+        }
+        crate::hir::Expr::Call { name, type_args: _, args } => {
+            if *name == "puts" || *name == "std::io::puts" {
+                if args.len() != 1 {
+                    return Err("puts expects 1 argument".to_string());
+                }
+                let val = eval_comptime_expr(&args[0], env, ctx)?;
+                match val {
+                    ComptimeVal::Str(s) => {
+                        println!("{}", s);
+                        Ok(ComptimeVal::Int(s.len() as i64))
+                    }
+                    other => Err(format!("puts expects a string, found {:?}", other)),
+                }
+            } else {
+                Err(format!("Calling function '{}' is not supported at compile-time", name))
+            }
+        }
+        _ => Err("Expression not supported at compile time".to_string()),
+    }
+}
+
+pub fn eval_comptime_block(
+    block: &crate::hir::Block,
+    env: &mut HashMap<String, ComptimeVal>,
+    ctx: &SemaContext,
+) -> Result<(), String> {
+    for stmt in &block.statements {
+        match stmt {
+            crate::hir::Statement::Let { name, is_mut: _, value } => {
+                let val = eval_comptime_expr(value, env, ctx)?;
+                env.insert(name.to_string(), val);
+            }
+            crate::hir::Statement::Assign { name, is_deref: _, value } => {
+                if env.contains_key(*name) {
+                    let val = eval_comptime_expr(value, env, ctx)?;
+                    env.insert(name.to_string(), val);
+                } else {
+                    return Err(format!("Variable '{}' not declared in comptime scope", name));
+                }
+            }
+            crate::hir::Statement::Expr(expr) => {
+                eval_comptime_expr(expr, env, ctx)?;
+            }
+            crate::hir::Statement::If { cond, then_block, else_block } => {
+                let cond_val = eval_comptime_expr(cond, env, ctx)?;
+                match cond_val {
+                    ComptimeVal::Bool(true) => {
+                        eval_comptime_block(then_block, env, ctx)?;
+                    }
+                    ComptimeVal::Bool(false) => {
+                        if let Some(eb) = else_block {
+                            eval_comptime_block(eb, env, ctx)?;
+                        }
+                    }
+                    other => return Err(format!("If condition must be a boolean expression, found {:?}", other)),
+                }
+            }
+            crate::hir::Statement::While { cond, body } => {
+                loop {
+                    let cond_val = eval_comptime_expr(cond, env, ctx)?;
+                    match cond_val {
+                        ComptimeVal::Bool(true) => {
+                            eval_comptime_block(body, env, ctx)?;
+                        }
+                        ComptimeVal::Bool(false) => {
+                            break;
+                        }
+                        other => return Err(format!("While condition must be a boolean expression, found {:?}", other)),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
