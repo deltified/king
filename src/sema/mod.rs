@@ -730,8 +730,9 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                 checked_fields.push(FieldInit { name: init.name, value: checked_val });
             }
             
+            let mangled_name_ref = Box::leak(mangled_name.clone().into_boxed_str());
             Ok(TypedExpr {
-                kind: ExprKind::StructLiteral { name: mangled_name.clone(), fields: checked_fields },
+                kind: ExprKind::StructLiteral { name: mangled_name_ref, fields: checked_fields },
                 ty: resolved_ty,
             })
         }
