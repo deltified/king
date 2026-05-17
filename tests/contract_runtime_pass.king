@@ -1,0 +1,11 @@
+fn div<T: type [is f64]>(a: T, b: T [ != 0.0 ]) -> T {
+    return a / b;
+}
+
+fn main() -> i64 {
+    let x = div<f64>(10.0, 2.0);
+    if x == 5.0 {
+        return 42;
+    }
+    return 0;
+}

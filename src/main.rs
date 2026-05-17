@@ -122,6 +122,8 @@ mod tests {
             ("tests/reflection.king", 52),
             ("tests/generics.king", 42),
             ("tests/comptime.king", 42),
+            ("tests/contract_runtime_pass.king", 42),
+            ("tests/contract_runtime_fail.king", 101),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();
@@ -197,6 +199,7 @@ mod tests {
             ("tests/borrow_err_struct_write_borrowed.king", "borrowed"),
             ("tests/import_err_private.king", "private"),
             ("tests/import_err_circular.king", "Circular import detected"),
+            ("tests/contract_comptime_fail.king", "Generic type constraint violated"),
         ];
 
         let temp_dir = std::env::temp_dir();

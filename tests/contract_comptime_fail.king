@@ -1,0 +1,9 @@
+fn div<T: type [is f64]>(a: T, b: T) -> T {
+    return a / b;
+}
+
+fn main() -> i64 {
+    // Should fail at compile time because i64 is not f64
+    let x = div<i64>(10, 2);
+    return 0;
+}
