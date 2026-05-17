@@ -81,6 +81,13 @@ fn log_metrics(category: u32, others: f64) {
     }  
 }
 ```
+Generic functions can also utilize variadics.
+
+```
+fn multiAdd<T: type [is i64 || is f64]>(first: &str, others: T) -> T {...}
+```
+In this case, every single item in `others` must be of type T.
+
 ### **3.2 Named and Default Arguments**
 
 Function arguments can contain default fallback assignments. Any argument featuring a default value, along with all following inputs in that signature, must be provided as a named token at the call site if changed from default.
@@ -102,7 +109,7 @@ Value and type gates are attached to parameter fields inside brackets [ ... ]. T
 | Constraint Category | Syntax Prototype | Execution Strategy   |
 | :---- | :---- | :---- |
 | **Runtime Value Contract** | fn scale(v: f64 [ != 0.0 ]) | Value range propagation; elides checks if provable, inserts fast call-site panic branch if dynamic. |
-| **Compile-Time Type Gate** | fn run<T: type>(a: T [ T.is_numeric() ]) | Evaluated entirely during monomorphization. Emits structured compiler error if condition is false. |
+| **Compile-Time Type Gate** | fn run<T: type>(a: T [ is i64 || is i32 ]) | Evaluated entirely during monomorphization. Emits structured compiler error if condition is false. |
 
 ## **4. Complete Comptime Reflection & Evaluation**
 
