@@ -34,19 +34,54 @@ impl<'a> Lexer<'a> {
 
         let b = self.bytes[self.pos];
         let token = match b {
-            b'=' => { self.pos += 1; Token::Assign }
-            b'+' => { self.pos += 1; Token::Plus }
+            b'=' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::EqEq
+                } else {
+                    self.pos += 1;
+                    Token::Assign
+                }
+            }
+            b'+' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::PlusEq
+                } else {
+                    self.pos += 1;
+                    Token::Plus
+                }
+            }
             b'-' => {
                 if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'>' {
                     self.pos += 2;
                     Token::Arrow
+                } else if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::MinusEq
                 } else {
                     self.pos += 1;
                     Token::Minus
                 }
             }
-            b'*' => { self.pos += 1; Token::Star }
-            b'/' => { self.pos += 1; Token::Slash }
+            b'*' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::StarEq
+                } else {
+                    self.pos += 1;
+                    Token::Star
+                }
+            }
+            b'/' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::SlashEq
+                } else {
+                    self.pos += 1;
+                    Token::Slash
+                }
+            }
             b'(' => { self.pos += 1; Token::LParen }
             b')' => { self.pos += 1; Token::RParen }
             b';' => { self.pos += 1; Token::Semi }
@@ -56,9 +91,51 @@ impl<'a> Lexer<'a> {
             b'}' => { self.pos += 1; Token::RBrace }
             b'[' => { self.pos += 1; Token::LBracket }
             b']' => { self.pos += 1; Token::RBracket }
-            b'<' => { self.pos += 1; Token::LessThan }
-            b'>' => { self.pos += 1; Token::GreaterThan }
-            b'&' => { self.pos += 1; Token::Ampersand }
+            b'<' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::LessEq
+                } else {
+                    self.pos += 1;
+                    Token::LessThan
+                }
+            }
+            b'>' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::GreaterEq
+                } else {
+                    self.pos += 1;
+                    Token::GreaterThan
+                }
+            }
+            b'&' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'&' {
+                    self.pos += 2;
+                    Token::AndAnd
+                } else {
+                    self.pos += 1;
+                    Token::Ampersand
+                }
+            }
+            b'|' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'|' {
+                    self.pos += 2;
+                    Token::OrOr
+                } else {
+                    self.pos += 1;
+                    Token::Unknown('|')
+                }
+            }
+            b'!' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
+                    self.pos += 2;
+                    Token::NotEq
+                } else {
+                    self.pos += 1;
+                    Token::Bang
+                }
+            }
             
             // Fast paths for Identifiers and Numbers
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => return Some(self.read_identifier()),
@@ -95,6 +172,11 @@ impl<'a> Lexer<'a> {
             "fn" => Token::Fn,
             "return" => Token::Return,
             "mut" => Token::Mut,
+            "if" => Token::If,
+            "else" => Token::Else,
+            "while" => Token::While,
+            "true" => Token::Bool(true),
+            "false" => Token::Bool(false),
             _ => Token::Ident(text),
         }
     }

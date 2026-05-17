@@ -5,6 +5,11 @@ pub enum Token<'a> {
     Return,
     Mut,
     
+    If,
+    Else,
+    While,
+    Bool(bool),
+    
     Ident(&'a str),
     Int(i64),
     
@@ -28,6 +33,18 @@ pub enum Token<'a> {
     LessThan,
     GreaterThan,
     Ampersand,
+    
+    AndAnd,
+    OrOr,
+    Bang,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    EqEq,
+    NotEq,
+    LessEq,
+    GreaterEq,
     
     Unknown(char),
 }
