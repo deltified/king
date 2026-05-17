@@ -27,6 +27,7 @@ pub enum Statement<'a> {
     },
     Assign {
         name: &'a str,
+        is_deref: bool,
         value: Expr<'a>,
     },
     Expr(Expr<'a>),

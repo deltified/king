@@ -224,6 +224,25 @@ impl<'a> Parser<'a> {
                 self.consume(Token::Semi, ";")?;
                 Ok(Statement::Continue)
             }
+            Some(Token::Star) => {
+                if self.pos + 2 < self.tokens.len() {
+                    if let Some(Token::Ident(name)) = self.tokens.get(self.pos + 1) {
+                        if let Some(Token::Assign) = self.tokens.get(self.pos + 2) {
+                            let name_val = *name;
+                            self.advance(); // consume '*'
+                            self.advance(); // consume identifier
+                            self.advance(); // consume '='
+                            
+                            let value = self.parse_expr(0)?;
+                            self.consume(Token::Semi, ";")?;
+                            return Ok(Statement::Assign { name: name_val, is_deref: true, value });
+                        }
+                    }
+                }
+                let value = self.parse_expr(0)?;
+                self.consume(Token::Semi, ";")?;
+                Ok(Statement::Expr(value))
+            }
             Some(Token::Ident(name)) => {
                 let next = self.tokens.get(self.pos + 1);
                 match next {
@@ -234,7 +253,7 @@ impl<'a> Parser<'a> {
                         
                         let value = self.parse_expr(0)?;
                         self.consume(Token::Semi, ";")?;
-                        Ok(Statement::Assign { name: name_val, value })
+                        Ok(Statement::Assign { name: name_val, is_deref: false, value })
                     }
                     Some(Token::PlusEq) | Some(Token::MinusEq) | Some(Token::StarEq) | Some(Token::SlashEq) => {
                         let name_val = *name;
@@ -255,7 +274,7 @@ impl<'a> Parser<'a> {
                             lhs: Box::new(Expr::Ident(name_val)),
                             rhs: Box::new(rhs_expr),
                         };
-                        Ok(Statement::Assign { name: name_val, value: desugared_value })
+                        Ok(Statement::Assign { name: name_val, is_deref: false, value: desugared_value })
                     }
                     _ => {
                         let value = self.parse_expr(0)?;
