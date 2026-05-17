@@ -1,0 +1,26 @@
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn add_coords(p: &Point) -> i64 {
+    return p.x + p.y;
+}
+
+fn main() -> i64 {
+    let p = Point { x: 10, y: 32 };
+    
+    if p.x != 10 {
+        return 1;
+    }
+    if p.y != 32 {
+        return 2;
+    }
+    
+    let sum = add_coords(&p);
+    if sum != 42 {
+        return 3;
+    }
+    
+    return 42;
+}

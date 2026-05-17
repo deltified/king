@@ -93,6 +93,8 @@ mod tests {
             ("tests/break_continue.king", 50),
             ("tests/casts.king", 7),
             ("tests/reference.king", 42),
+            ("tests/struct_simple.king", 42),
+            ("tests/struct_mutability.king", 42),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();
@@ -164,6 +166,8 @@ mod tests {
             ("tests/borrow_err_read_mut_borrowed.king", "mutably borrowed"),
             ("tests/borrow_err_write_immut_ref.king", "immutable reference"),
             ("tests/borrow_err_return_local_ref.king", "Cannot return reference to local variable"),
+            ("tests/borrow_err_struct_double_mut.king", "already borrowed"),
+            ("tests/borrow_err_struct_write_borrowed.king", "borrowed"),
         ];
 
         let temp_dir = std::env::temp_dir();
