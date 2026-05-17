@@ -9,6 +9,11 @@ pub enum Token<'a> {
     Extern,
     Is,
     Comptime,
+    Others,
+    Inline,
+    For,
+    In,
+    DotDot,
     
     If,
     Else,

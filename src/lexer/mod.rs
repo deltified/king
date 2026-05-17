@@ -99,7 +99,15 @@ impl<'a> Lexer<'a> {
             b'}' => { self.pos += 1; Token::RBrace }
             b'[' => { self.pos += 1; Token::LBracket }
             b']' => { self.pos += 1; Token::RBracket }
-            b'.' => { self.pos += 1; Token::Dot }
+            b'.' => {
+                if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'.' {
+                    self.pos += 2;
+                    Token::DotDot
+                } else {
+                    self.pos += 1;
+                    Token::Dot
+                }
+            }
             b'<' => {
                 if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
                     self.pos += 2;
@@ -222,6 +230,10 @@ impl<'a> Lexer<'a> {
             "import" => Token::Import,
             "pub" => Token::Pub,
             "extern" => Token::Extern,
+            "others" => Token::Others,
+            "inline" => Token::Inline,
+            "for" => Token::For,
+            "in" => Token::In,
             _ => Token::Ident(text),
         }
     }
