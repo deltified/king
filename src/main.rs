@@ -3,10 +3,12 @@ mod parser;
 
 use lexer::Lexer;
 use lexer::Token;
+use parser::{Program, Statement, Param, Expr, BinOp};
 
 fn main() {
     test_lexing();
     test_parsing();
+    test_llvm();
 }
 
 
@@ -73,5 +75,29 @@ fn test_parsing() {
         }
     );
     println!("parser passed test!");
+}
+
+fn test_llvm() {
+    use inkwell::context::Context;
+
+    let context = Context::create();
+    let module = context.create_module("sum");
+    let builder = context.create_builder();
+
+    let i64_type = context.i64_type();
+    let fn_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    let function = module.add_function("sum", fn_type, None);
+
+    let basic_block = context.append_basic_block(function, "entry");
+    builder.position_at_end(basic_block);
+
+    let x = function.get_nth_param(0).unwrap().into_int_value();
+    let y = function.get_nth_param(1).unwrap().into_int_value();
+
+    let sum = builder.build_int_add(x, y, "sum_val").unwrap();
+    builder.build_return(Some(&sum)).unwrap();
+
+    println!("Generated LLVM IR:");
+    module.print_to_stderr();
 }
 
