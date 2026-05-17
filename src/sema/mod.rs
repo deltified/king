@@ -10,6 +10,7 @@ pub mod ast {
         Void,
         Char,
         Str,
+        TypeVal,
         Ref {
             is_mut: bool,
             ty: Box<Type>,
@@ -26,6 +27,7 @@ pub mod ast {
                 HirType::Void => Type::Void,
                 HirType::Char => Type::Char,
                 HirType::Str => Type::Str,
+                HirType::TypeVal => Type::TypeVal,
                 HirType::Ref { is_mut, ty } => Type::Ref {
                     is_mut,
                     ty: Box::new(Type::from(*ty)),
@@ -252,13 +254,14 @@ impl<'a> SemaContext<'a> {
     }
 
     pub fn resolve_struct_type(&self, name: &str) -> Result<Type, String> {
-        if name == "i64" || name == "f64" || name == "bool" || name == "void" || name == "char" || name == "str" {
+        if name == "i64" || name == "f64" || name == "bool" || name == "void" || name == "char" || name == "str" || name == "type" {
             return Ok(match name {
                 "i64" => Type::I64,
                 "f64" => Type::F64,
                 "bool" => Type::Bool,
                 "char" => Type::Char,
                 "str" => Type::Str,
+                "type" => Type::TypeVal,
                 _ => Type::Void,
             });
         }
@@ -833,6 +836,32 @@ fn check_expr<'a>(ctx: &mut SemaContext<'a>, expr: crate::hir::Expr<'a>) -> Resu
                 }
             }
         }
+        crate::hir::Expr::Is { expr, ty } => {
+            let typed_expr = check_expr(ctx, *expr)?;
+            let raw_dest_ty = Type::from(ty);
+            let dest_ty = ctx.resolve_type(raw_dest_ty)?;
+            let is_match = typed_expr.ty == dest_ty;
+            Ok(TypedExpr {
+                kind: ExprKind::Bool(is_match),
+                ty: Type::Bool,
+            })
+        }
+        crate::hir::Expr::BuiltinCall { name, args } => {
+            match name {
+                "typeof" => {
+                    if args.len() != 1 {
+                        return Err(format!("@typeof expects exactly 1 argument, found {}", args.len()));
+                    }
+                    let typed_arg = check_expr(ctx, args[0].clone())?;
+                    let ty_id = get_type_id(&typed_arg.ty);
+                    Ok(TypedExpr {
+                        kind: ExprKind::Int(ty_id),
+                        ty: Type::TypeVal,
+                    })
+                }
+                other => Err(format!("Unknown builtin function @{}", other)),
+            }
+        }
     }
 }
 
@@ -870,6 +899,35 @@ impl<T> OptionExt<T> for Option<T> {
         match self {
             Some(v) => Ok(v),
             None => Err(err()),
+        }
+    }
+}
+
+pub fn get_type_id(ty: &Type) -> i64 {
+    match ty {
+        Type::Void => 0,
+        Type::I64 => 1,
+        Type::F64 => 2,
+        Type::Bool => 3,
+        Type::Char => 4,
+        Type::Str => 5,
+        Type::TypeVal => 6,
+        Type::Ref { is_mut, ty } => {
+            let inner_id = get_type_id(ty);
+            let mut_flag = if *is_mut { 1 } else { 0 };
+            inner_id * 10 + mut_flag + 10
+        }
+        Type::Struct(name) => {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            name.hash(&mut hasher);
+            let hash = (hasher.finish() & 0x7FFFFFFFFFFFFFFF) as i64;
+            if hash < 1000000 {
+                hash + 1000000
+            } else {
+                hash
+            }
         }
     }
 }
