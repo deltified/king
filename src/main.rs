@@ -5,10 +5,56 @@ mod sema;
 mod mir;
 mod codegen;
 
+fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
+    let input = std::fs::read_to_string(input_path).map_err(|e| e.to_string())?;
+    let lexer = lexer::Lexer::new(&input);
+    let tokens = lexer.tokenize();
+    let ast = parser::parse(tokens).map_err(|e| format!("{:?}", e))?;
+    let hir_prog = hir::build(ast);
+    let typed_hir = sema::analyze(hir_prog)?;
+    let mir_prog = mir::build(typed_hir);
+    let context = inkwell::context::Context::create();
+    let codegen = codegen::Codegen::new(&context, "king_module");
+    let module = codegen.compile_program(mir_prog);
+    module.print_to_file(output_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn main() {
-    println!("King Compiler");
-    println!("To run the compiler test suite, execute:");
-    println!("  PATH=\"/opt/homebrew/opt/llvm/bin:$PATH\" cargo test");
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        println!("King Compiler");
+        println!("To run the compiler test suite, execute:");
+        println!("  PATH=\"/opt/homebrew/opt/llvm/bin:$PATH\" cargo test");
+        return;
+    }
+    let mut input_path = None;
+    let mut output_path = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => {
+                if i + 1 < args.len() {
+                    output_path = Some(&args[i + 1]);
+                    i += 2;
+                } else {
+                    std::process::exit(1);
+                }
+            }
+            path => {
+                input_path = Some(path);
+                i += 1;
+            }
+        }
+    }
+    let Some(input) = input_path else {
+        std::process::exit(1);
+    };
+    let default_output = format!("{}.ll", input);
+    let output = output_path.map(|s| s.as_str()).unwrap_or(&default_output);
+    if compile_file(input, output).is_err() {
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
@@ -165,4 +211,4 @@ int main() {
         let stdout = String::from_utf8_lossy(&run_output.stdout);
         assert_eq!(stdout.trim(), "compute(10) = 150");
     }
-}
+    
