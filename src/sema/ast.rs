@@ -170,4 +170,5 @@ pub enum ExprKind<'a> {
         expr: Box<TypedExpr<'a>>,
         field: &'a str,
     },
+    New(Box<TypedExpr<'a>>),
 }

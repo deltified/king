@@ -815,6 +815,21 @@ pub fn check_expr<'a>(
             }
             other => Err(format!("Unknown builtin function @{}", other)),
         },
+        crate::hir::Expr::New(expr) => {
+            let typed_expr = check_expr(ctx, *expr)?;
+            match &typed_expr.ty {
+                Type::Struct(_) => {}
+                _ => return Err(format!("'new' keyword can only be applied to struct initialization")),
+            }
+            let ref_ty = Type::Ref {
+                is_mut: true,
+                ty: Box::new(typed_expr.ty.clone()),
+            };
+            Ok(TypedExpr {
+                kind: ExprKind::New(Box::new(typed_expr)),
+                ty: ref_ty,
+            })
+        }
         crate::hir::Expr::IndexAccess { .. } => {
             Err("subscripting is only supported on variadic others".to_string())
         }
