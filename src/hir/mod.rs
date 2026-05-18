@@ -217,6 +217,7 @@ pub mod ast {
             expr: Box<Expr<'a>>,
             index: Box<Expr<'a>>,
         },
+        New(Box<Expr<'a>>),
     }
 }
 
@@ -485,5 +486,6 @@ fn build_expr<'a>(expr: crate::parser::Expr<'a>) -> Expr<'a> {
             expr: Box::new(build_expr(*expr)),
             index: Box::new(build_expr(*index)),
         },
+        crate::parser::Expr::New(expr) => Expr::New(Box::new(build_expr(*expr))),
     }
 }
