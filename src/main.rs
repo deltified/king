@@ -126,6 +126,7 @@ mod tests {
             ("tests/import_success.king", 60),
             ("tests/strings.king", 42),
             ("tests/reflection.king", 52),
+            ("tests/structinfo.king", 42),
             ("tests/generics.king", 42),
             ("tests/comptime.king", 42),
             ("tests/contract_runtime_pass.king", 42),

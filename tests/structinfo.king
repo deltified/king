@@ -1,0 +1,37 @@
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() -> i64 {
+    let info = @structinfo(Point);
+    
+    if info.struct_name != "Point" {
+        return 1;
+    }
+    
+    if info.x != @typeof(42) {
+        return 2;
+    }
+    if info.y != @typeof(42) {
+        return 3;
+    }
+
+    let p = Point { x: 10, y: 20 };
+    let info2 = @structinfo(p);
+    if info2.struct_name != "Point" {
+        return 4;
+    }
+
+    comptime {
+        let c_info = @structinfo(Point);
+        if c_info.struct_name != "Point" {
+            let error = 1 / 0;
+        }
+        if c_info.x != i64 {
+            let error = 1 / 0;
+        }
+    }
+
+    return 42;
+}

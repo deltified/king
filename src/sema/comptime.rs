@@ -59,6 +59,8 @@ pub fn eval_comptime_expr(
                 }
                 (BinOp::Eq, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l == r)),
                 (BinOp::Ne, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l != r)),
+                (BinOp::Eq, ComptimeVal::Str(l), ComptimeVal::Str(r)) => Ok(ComptimeVal::Bool(l == r)),
+                (BinOp::Ne, ComptimeVal::Str(l), ComptimeVal::Str(r)) => Ok(ComptimeVal::Bool(l != r)),
                 (BinOp::Lt, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l < r)),
                 (BinOp::Le, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l <= r)),
                 (BinOp::Gt, ComptimeVal::Int(l), ComptimeVal::Int(r)) => Ok(ComptimeVal::Bool(l > r)),
