@@ -293,7 +293,7 @@ fn compile_statement<'a>(ctx: &mut MirBuilderContext<'a>, stmt: crate::sema::Sta
             
             ctx.start_block(next_lbl);
         }
-        crate::sema::Statement::HandleLet { name, value, ok_body, err_body, is_ok_escape } => {
+        crate::sema::Statement::HandleLet { name, value, ok_body, err_body, is_ok_escape: _, .. } => {
             let val_op = compile_expr(ctx, value.clone());
             let struct_name = match &value.ty {
                 Type::Struct(s) => s,

@@ -96,6 +96,24 @@ mod tests {
 
     static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+    fn get_clang_cmd() -> &'static str {
+        static CLANG_CMD: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+        *CLANG_CMD.get_or_init(|| {
+            if Command::new("clang-22")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                "clang-22"
+            } else {
+                "clang"
+            }
+        })
+    }
+
     // RAII helper to ensure all temporary files are deleted when the test finishes or panics.
     struct TempCleanup {
         paths: Vec<PathBuf>,
@@ -151,7 +169,7 @@ mod tests {
                 failed.push((source_file, format!("Compilation failed: {}", e)));
                 continue;
             }
-            let compile_status = Command::new("clang")
+            let compile_status = Command::new(get_clang_cmd())
                 .arg(&ir_path)
                 // We don't care about these warnings during testing
                 .arg("-Wno-gcc-install-dir-libstdcxx")
