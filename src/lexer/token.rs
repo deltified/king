@@ -33,6 +33,7 @@ pub enum Token<'a> {
     Struct,
     Trait,
     Impl,
+    New,
     
     Assign, 
     Plus,   

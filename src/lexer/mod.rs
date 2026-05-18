@@ -233,6 +233,7 @@ impl<'a> Lexer<'a> {
             "struct" => Token::Struct,
             "trait" => Token::Trait,
             "impl" => Token::Impl,
+            "new" => Token::New,
             "import" => Token::Import,
             "pub" => Token::Pub,
             "extern" => Token::Extern,
