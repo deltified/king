@@ -929,6 +929,11 @@ impl<'a> Parser<'a> {
                 self.consume(Token::RParen, ")")?;
                 Ok(Expr::BuiltinCall { name: name_val, args })
             }
+            Some(Token::New) => {
+                self.advance();
+                let expr = self.parse_primary()?;
+                Ok(Expr::New(Box::new(expr)))
+            }
             Some(Token::LParen) => {
                 self.advance();
                 let expr = self.parse_expr(0)?;

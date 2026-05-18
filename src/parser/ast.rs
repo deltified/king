@@ -183,6 +183,7 @@ pub enum Expr<'a> {
         expr: Box<Expr<'a>>,
         index: Box<Expr<'a>>,
     },
+    New(Box<Expr<'a>>),
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
