@@ -49,6 +49,13 @@ pub fn substitute_statement<'a>(
             is_mut,
             value: substitute_expr(value, mapping),
         },
+        crate::hir::Statement::HandleLet { name, is_mut, value, ok_body, err_body } => crate::hir::Statement::HandleLet {
+            name,
+            is_mut,
+            value: substitute_expr(value, mapping),
+            ok_body: substitute_block(ok_body, mapping),
+            err_body: substitute_block(err_body, mapping),
+        },
         crate::hir::Statement::Assign { name, is_deref, value } => crate::hir::Statement::Assign {
             name,
             is_deref,
@@ -340,6 +347,13 @@ fn subst_loop_var_in_statement_with_var<'a>(
             is_mut,
             value: subst_loop_var_in_expr_with_var(value, var_name, var_val, others_len)?,
         }),
+        crate::hir::Statement::HandleLet { name, is_mut, value, ok_body, err_body } => Ok(crate::hir::Statement::HandleLet {
+            name,
+            is_mut,
+            value: subst_loop_var_in_expr_with_var(value, var_name, var_val, others_len)?,
+            ok_body: subst_loop_var_in_block(ok_body, var_name, var_val, others_len)?,
+            err_body: subst_loop_var_in_block(err_body, var_name, var_val, others_len)?,
+        }),
         crate::hir::Statement::Assign { name, is_deref, value } => Ok(crate::hir::Statement::Assign {
             name,
             is_deref,
@@ -533,6 +547,13 @@ fn subst_loop_var_in_statement<'a>(
             name,
             is_mut,
             value: subst_loop_var_in_expr(value, others_len)?,
+        }),
+        crate::hir::Statement::HandleLet { name, is_mut, value, ok_body, err_body } => Ok(crate::hir::Statement::HandleLet {
+            name,
+            is_mut,
+            value: subst_loop_var_in_expr(value, others_len)?,
+            ok_body: unroll_inline_for_block(ok_body, others_len)?,
+            err_body: unroll_inline_for_block(err_body, others_len)?,
         }),
         crate::hir::Statement::Assign { name, is_deref, value } => Ok(crate::hir::Statement::Assign {
             name,

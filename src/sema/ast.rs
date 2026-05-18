@@ -89,6 +89,13 @@ pub enum Statement<'a> {
         is_mut: bool,
         value: TypedExpr<'a>,
     },
+    HandleLet {
+        name: &'a str,
+        is_mut: bool,
+        value: TypedExpr<'a>,
+        ok_body: Block<'a>,
+        err_body: Block<'a>,
+    },
     Assign {
         name: &'a str,
         is_deref: bool,

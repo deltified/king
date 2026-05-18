@@ -35,6 +35,54 @@ pub fn check_statement<'a>(
                 value: typed_value,
             })
         }
+        crate::hir::Statement::HandleLet {
+            name,
+            is_mut,
+            value,
+            ok_body,
+            err_body,
+        } => {
+            let typed_value = check_expr(ctx, value)?;
+            let struct_name = match &typed_value.ty {
+                Type::Struct(s_name) => s_name.clone(),
+                _ => return Err(format!("handle let requires a struct type, found {:?}", typed_value.ty)),
+            };
+            
+            let fields = ctx.structs.get(&struct_name)
+                .ok_ok_or_else(|| format!("Struct '{}' not found in semantic context", struct_name))?
+                .clone();
+            
+            let is_ok_ty = fields.iter().find(|(f, _)| *f == "is_ok").map(|(_, t)| t.clone())
+                .ok_ok_or_else(|| format!("Struct '{}' must have an 'is_ok' field for error handling", struct_name))?;
+            if is_ok_ty != Type::Bool {
+                return Err(format!("Field 'is_ok' of struct '{}' must be of type bool, found {:?}", struct_name, is_ok_ty));
+            }
+            
+            let ok_ty = fields.iter().find(|(f, _)| *f == "ok").map(|(_, t)| t.clone())
+                .ok_ok_or_else(|| format!("Struct '{}' must have an 'ok' field for error handling", struct_name))?;
+            
+            let _err_ty = fields.iter().find(|(f, _)| *f == "err").map(|(_, t)| t.clone())
+                .ok_ok_or_else(|| format!("Struct '{}' must have an 'err' field for error handling", struct_name))?;
+            
+            ctx.push_scope();
+            ctx.declare_var(name, ok_ty, is_mut);
+            let mut checked_ok_stmts = Vec::new();
+            for s in ok_body.statements {
+                checked_ok_stmts.push(check_statement(ctx, s)?);
+            }
+            ctx.pop_scope();
+            let checked_ok_block = Block { statements: checked_ok_stmts };
+            
+            let checked_err_block = check_block(ctx, err_body)?;
+            
+            Ok(Statement::HandleLet {
+                name,
+                is_mut,
+                value: typed_value,
+                ok_body: checked_ok_block,
+                err_body: checked_err_block,
+            })
+        }
         crate::hir::Statement::Assign {
             name,
             is_deref,
