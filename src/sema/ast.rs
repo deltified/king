@@ -89,12 +89,18 @@ pub enum Statement<'a> {
         is_mut: bool,
         value: TypedExpr<'a>,
     },
+    AssertLet {
+        name: &'a str,
+        is_mut: bool,
+        value: TypedExpr<'a>,
+    },
     HandleLet {
         name: &'a str,
         is_mut: bool,
         value: TypedExpr<'a>,
         ok_body: Block<'a>,
         err_body: Block<'a>,
+        is_ok_escape: bool,
     },
     Assign {
         name: &'a str,
