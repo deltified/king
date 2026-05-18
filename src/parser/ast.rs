@@ -52,12 +52,18 @@ pub enum Statement<'a> {
         is_mut: bool,
         value: Expr<'a>,
     },
+    AssertLet {
+        name: &'a str,
+        is_mut: bool,
+        value: Expr<'a>,
+    },
     HandleLet {
         name: &'a str,
         is_mut: bool,
         value: Expr<'a>,
         ok_body: Vec<Statement<'a>>,
         err_body: Vec<Statement<'a>>,
+        is_ok_escape: bool,
     },
     Assign {
         name: &'a str,

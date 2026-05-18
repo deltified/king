@@ -331,6 +331,27 @@ impl<'a> Parser<'a> {
                 self.consume(Token::Semi, ";")?;
                 Ok(Statement::Return(value))
             }
+            Some(Token::Bang) if self.tokens.get(self.pos + 1) == Some(&Token::Let) => {
+                self.advance(); // consume '!'
+                self.advance(); // consume 'let'
+                let is_mut = if self.peek() == Some(&Token::Mut) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                
+                let name = match self.advance() {
+                    Some(Token::Ident(name)) => name,
+                    found => return Err(ParseError::ExpectedIdentifier { found }),
+                };
+                
+                self.consume(Token::Assign, "=")?;
+                let value = self.parse_expr(0)?;
+                self.consume(Token::Semi, ";")?;
+                
+                Ok(Statement::AssertLet { name, is_mut, value })
+            }
             Some(Token::Handle) => {
                 self.advance(); // consume 'handle'
                 self.consume(Token::Let, "let")?;
@@ -353,31 +374,42 @@ impl<'a> Parser<'a> {
                 
                 let mut ok_body = None;
                 let mut err_body = None;
+                let mut is_ok_escape = false;
                 
                 for _ in 0..2 {
                     let arm_name = match self.advance() {
                         Some(Token::Ident(name)) if name == "ok" || name == "err" => name,
                         found => return Err(ParseError::UnexpectedToken { expected: "ok or err", found }),
                     };
-                    self.consume(Token::FatArrow, "=>")?;
                     
-                    let body = if self.peek() == Some(&Token::LBrace) {
-                        self.advance(); // consume '{'
-                        let mut stmts = Vec::new();
-                        while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
-                            stmts.push(self.parse_statement()?);
-                        }
-                        self.consume(Token::RBrace, "}")?;
+                    let body = if arm_name == "ok" && self.peek() == Some(&Token::Bang) {
+                        self.advance(); // consume '!'
+                        is_ok_escape = true;
                         if self.peek() == Some(&Token::Comma) {
-                            self.advance();
+                            self.advance(); // consume ','
                         }
-                        stmts
+                        Vec::new()
                     } else {
-                        let expr = self.parse_expr(0)?;
-                        if self.peek() == Some(&Token::Comma) {
-                            self.advance();
+                        self.consume(Token::FatArrow, "=>")?;
+                        
+                        if self.peek() == Some(&Token::LBrace) {
+                            self.advance(); // consume '{'
+                            let mut stmts = Vec::new();
+                            while self.peek().is_some() && self.peek() != Some(&Token::RBrace) {
+                                stmts.push(self.parse_statement()?);
+                            }
+                            self.consume(Token::RBrace, "}")?;
+                            if self.peek() == Some(&Token::Comma) {
+                                self.advance();
+                            }
+                            stmts
+                        } else {
+                            let expr = self.parse_expr(0)?;
+                            if self.peek() == Some(&Token::Comma) {
+                                self.advance();
+                            }
+                            vec![Statement::Expr(expr)]
                         }
-                        vec![Statement::Expr(expr)]
                     };
                     
                     if arm_name == "ok" {
@@ -398,7 +430,7 @@ impl<'a> Parser<'a> {
                 let ok_body = ok_body.ok_or(ParseError::UnexpectedToken { expected: "ok arm", found: None })?;
                 let err_body = err_body.ok_or(ParseError::UnexpectedToken { expected: "err arm", found: None })?;
                 
-                Ok(Statement::HandleLet { name, is_mut, value, ok_body, err_body })
+                Ok(Statement::HandleLet { name, is_mut, value, ok_body, err_body, is_ok_escape })
             }
             Some(Token::Let) => {
                 self.advance(); // consume 'let'
