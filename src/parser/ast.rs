@@ -52,6 +52,13 @@ pub enum Statement<'a> {
         is_mut: bool,
         value: Expr<'a>,
     },
+    HandleLet {
+        name: &'a str,
+        is_mut: bool,
+        value: Expr<'a>,
+        ok_body: Vec<Statement<'a>>,
+        err_body: Vec<Statement<'a>>,
+    },
     Assign {
         name: &'a str,
         is_deref: bool,
