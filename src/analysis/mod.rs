@@ -102,6 +102,9 @@ fn add_rvalue_uses<'a>(rvalue: &Rvalue<'a>, uses: &mut Vec<Place<'a>>) {
         Rvalue::RefFieldVar(_, name, _) => {
             uses.push(Place::Param(name));
         }
+        Rvalue::New(sub_rvalue) => {
+            add_rvalue_uses(sub_rvalue, uses);
+        }
     }
 }
 
