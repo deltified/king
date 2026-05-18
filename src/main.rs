@@ -151,6 +151,9 @@ mod tests {
             }
             let compile_status = Command::new("clang")
                 .arg(&ir_path)
+                // We don't care about these warnings during testing
+                .arg("-Wno-gcc-install-dir-libstdcxx")
+                .arg("-Wno-override-module")
                 .arg("-o")
                 .arg(&output_bin_path)
                 .status();
