@@ -323,9 +323,6 @@ pub fn analyze<'a>(mut program: crate::hir::Program<'a>) -> Result<Program<'a>, 
         });
     }
 
-    let monomorphized_structs = std::mem::take(&mut ctx.monomorphized_structs);
-    structs.extend(monomorphized_structs);
-
     let mut functions = Vec::new();
     for f in normal_functions {
         ctx.current_module = f.module_name.clone();
@@ -385,6 +382,8 @@ pub fn analyze<'a>(mut program: crate::hir::Program<'a>) -> Result<Program<'a>, 
             ret_type,
         });
     }
+    let monomorphized_structs = std::mem::take(&mut ctx.monomorphized_structs);
+    structs.extend(monomorphized_structs);
 
     Ok(Program {
         structs,
