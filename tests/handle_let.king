@@ -14,6 +14,7 @@ fn safe_divide(val: i64, step: i64) -> Result {
 fn main() -> i64 {
     let mut sum = 0;
     
+    // 1. Original success path (ok branch)
     handle let res1 = safe_divide(100, 2) {
         ok => {
             sum = sum + res1;
@@ -23,6 +24,7 @@ fn main() -> i64 {
         }
     }
     
+    // 2. Original error path (err branch)
     handle let res2 = safe_divide(100, 0) {
         ok => {
             sum = sum + res2;
@@ -32,7 +34,20 @@ fn main() -> i64 {
         }
     }
     
-    if sum == 60 {
+    // 3. !let assertive unwrapping success path
+    !let res3 = safe_divide(100, 4);
+    sum = sum + res3;
+    
+    // 4. handle let ok! escape success path
+    handle let res4 = safe_divide(100, 5) {
+        ok!,
+        err => {
+            sum = sum + 999;
+        }
+    }
+    sum = sum + res4;
+    
+    if sum == 105 {
         return 42;
     }
     return 0;
