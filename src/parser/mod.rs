@@ -359,7 +359,7 @@ impl<'a> Parser<'a> {
                         Some(Token::Ident(name)) if name == "ok" || name == "err" => name,
                         found => return Err(ParseError::UnexpectedToken { expected: "ok or err", found }),
                     };
-                    self.consume(Token::Arrow, "=>")?;
+                    self.consume(Token::FatArrow, "=>")?;
                     
                     let body = if self.peek() == Some(&Token::LBrace) {
                         self.advance(); // consume '{'

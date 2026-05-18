@@ -53,6 +53,7 @@ pub enum Token<'a> {
     LBracket,
     RBracket,
     Arrow,
+    FatArrow,
     LessThan,
     GreaterThan,
     Ampersand,

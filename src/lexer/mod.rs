@@ -38,6 +38,9 @@ impl<'a> Lexer<'a> {
                 if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'=' {
                     self.pos += 2;
                     Token::EqEq
+                } else if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'>' {
+                    self.pos += 2;
+                    Token::FatArrow
                 } else {
                     self.pos += 1;
                     Token::Assign
