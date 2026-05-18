@@ -837,6 +837,9 @@ pub fn check_expr<'a>(
 }
 
 pub fn is_writable<'a>(ctx: &SemaContext<'a>, expr: &TypedExpr<'a>) -> bool {
+    if let Type::Ref { is_mut, .. } = &expr.ty {
+        return *is_mut;
+    }
     match &expr.kind {
         ExprKind::Ident(name) => {
             if let Some((_, is_mut)) = ctx.lookup_var(name) {
