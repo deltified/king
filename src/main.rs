@@ -129,6 +129,7 @@ mod tests {
             ("tests/structinfo.king", 42),
             ("tests/generics.king", 42),
             ("tests/comptime.king", 42),
+            ("tests/handle_let.king", 42),
             ("tests/contract_runtime_pass.king", 42),
             ("tests/contract_runtime_fail.king", 101),
             ("tests/named_default_args.king", 42),

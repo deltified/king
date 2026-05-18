@@ -1,0 +1,39 @@
+struct Result {
+    is_ok: bool,
+    ok: i64,
+    err: i64,
+}
+
+fn safe_divide(val: i64, step: i64) -> Result {
+    if step == 0 {
+        return Result { is_ok: false, ok: 0, err: 99 };
+    }
+    return Result { is_ok: true, ok: val / step, err: 0 };
+}
+
+fn main() -> i64 {
+    let mut sum = 0;
+    
+    handle let res1 = safe_divide(100, 2) {
+        ok => {
+            sum = sum + res1;
+        },
+        err => {
+            sum = sum + 999;
+        }
+    }
+    
+    handle let res2 = safe_divide(100, 0) {
+        ok => {
+            sum = sum + res2;
+        },
+        err => {
+            sum = sum + 10;
+        }
+    }
+    
+    if sum == 60 {
+        return 42;
+    }
+    return 0;
+}
