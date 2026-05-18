@@ -153,6 +153,7 @@ mod tests {
             ("tests/named_default_args.king", 42),
             ("tests/variadics.king", 42),
             ("tests/traits.king", 40),
+            ("tests/heap_free.king", 42),
         ];
         let mut failed = Vec::new();
         let mut passed = Vec::new();

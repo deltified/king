@@ -1,0 +1,32 @@
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn test_heap() -> i64 {
+    let p = new Point { x: 20, y: 22 };
+    
+    if p.x != 20 {
+        return 1;
+    }
+    
+    if p.y != 22 {
+        return 2;
+    }
+    
+    p.x = 30;
+    if p.x != 30 {
+        return 3;
+    }
+    
+    let sum = p.x + p.y;
+    if sum != 52 {
+        return 4;
+    }
+    
+    return 42;
+}
+
+fn main() -> i64 {
+    return test_heap();
+}
