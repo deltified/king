@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use super::ast::{Type, Function};
+use super::ast::{Type, Function, StructDef};
 
 pub struct StructMeta<'a> {
     pub original_name: &'a str,
@@ -67,6 +67,7 @@ pub struct SemaContext<'a> {
     pub current_module: String,
     pub generic_templates: HashMap<String, crate::hir::Function<'a>>,
     pub monomorphized_functions: Vec<Function<'a>>,
+    pub monomorphized_structs: Vec<StructDef<'a>>,
 }
 
 impl<'a> SemaContext<'a> {
@@ -85,6 +86,7 @@ impl<'a> SemaContext<'a> {
             current_module: String::new(),
             generic_templates: HashMap::new(),
             monomorphized_functions: Vec::new(),
+            monomorphized_structs: Vec::new(),
         }
     }
 
