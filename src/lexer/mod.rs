@@ -213,6 +213,7 @@ impl<'a> Lexer<'a> {
         let text = &self.input[start..self.pos];
         match text {
             "let" => Token::Let,
+            "handle" => Token::Handle,
             "fn" => Token::Fn,
             "return" => Token::Return,
             "mut" => Token::Mut,

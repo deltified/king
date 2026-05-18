@@ -1,6 +1,7 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token<'a> {
     Let,
+    Handle,
     Fn,
     Return,
     Mut,
