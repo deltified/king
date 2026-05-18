@@ -508,7 +508,10 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
                 _ => unreachable!(),
             };
             let fields_list = ctx.structs.get(struct_name).cloned().unwrap_or_default();
-            let field_index = fields_list.iter().position(|f| f == field).unwrap();
+            let field_index = match fields_list.iter().position(|f| f == field) {
+                Some(idx) => idx,
+                None => panic!("Field '{}' not found in struct '{}'. Available fields: {:?}", field, struct_name, fields_list),
+            };
             
             let temp_var = ctx.declare_temp(expr.ty.clone());
             ctx.push_statement(Statement::Assign(temp_var, Rvalue::FieldAccess(sub_op, field_index)));

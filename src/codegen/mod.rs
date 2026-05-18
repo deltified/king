@@ -369,8 +369,16 @@ impl<'ctx> Codegen<'ctx> {
                         BinOp::And | BinOp::Or => panic!("Logical operators not supported on float values"),
                     }
                 } else {
-                    let l = lhs_val.into_int_value();
-                    let r = rhs_val.into_int_value();
+                    let l = if lhs_val.is_pointer_value() {
+                        self.builder.build_ptr_to_int(lhs_val.into_pointer_value(), self.context.i64_type(), "lhs_ptr_to_int").unwrap()
+                    } else {
+                        lhs_val.into_int_value()
+                    };
+                    let r = if rhs_val.is_pointer_value() {
+                        self.builder.build_ptr_to_int(rhs_val.into_pointer_value(), self.context.i64_type(), "rhs_ptr_to_int").unwrap()
+                    } else {
+                        rhs_val.into_int_value()
+                    };
                     match op {
                         BinOp::Add => self.builder.build_int_add(l, r, "add_tmp").unwrap().into(),
                         BinOp::Sub => self.builder.build_int_sub(l, r, "sub_tmp").unwrap().into(),
