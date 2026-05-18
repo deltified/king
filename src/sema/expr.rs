@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::parser::{BinOp, UnOp};
-use super::ast::{ExprKind, FieldInit, Function, Param, Type, TypedExpr};
-use super::context::{mangle_name, OptionExt, SemaContext, FunctionMeta};
+use super::ast::{ExprKind, FieldInit, Function, Param, Type, TypedExpr, StructDef};
+use super::context::{mangle_name, OptionExt, SemaContext, FunctionMeta, StructMeta};
 use super::generics::{
     get_mangled_mono_name, resolve_generic_template, substitute_block, substitute_type,
     substitute_expr, type_to_hir,
@@ -683,6 +683,134 @@ pub fn check_expr<'a>(
                 Ok(TypedExpr {
                     kind: ExprKind::Int(ty_id),
                     ty: Type::TypeVal,
+                })
+            }
+            "structinfo" => {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "@structinfo expects exactly 1 argument, found {}",
+                        args.len()
+                    ));
+                }
+                let struct_name = match &args[0] {
+                    crate::hir::Expr::Ident(name) => {
+                        if let Ok(Type::Struct(mangled)) = ctx.resolve_struct_type(name) {
+                            mangled
+                        } else {
+                            let typed_arg = check_expr(ctx, args[0].clone())?;
+                            let mut base_ty = &typed_arg.ty;
+                            while let Type::Ref { ty, .. } = base_ty {
+                                base_ty = ty;
+                            }
+                            if let Type::Struct(mangled) = base_ty {
+                                mangled.clone()
+                            } else {
+                                return Err(format!(
+                                    "@structinfo expects a struct type or expression, found {:?}",
+                                    typed_arg.ty
+                                ));
+                            }
+                        }
+                    }
+                    other => {
+                        let typed_arg = check_expr(ctx, other.clone())?;
+                        let mut base_ty = &typed_arg.ty;
+                        while let Type::Ref { ty, .. } = base_ty {
+                            base_ty = ty;
+                        }
+                        if let Type::Struct(mangled) = base_ty {
+                            mangled.clone()
+                        } else {
+                            return Err(format!(
+                                "@structinfo expects a struct type or expression, found {:?}",
+                                typed_arg.ty
+                            ));
+                        }
+                    }
+                };
+
+                let fields = ctx.structs.get(&struct_name).ok_ok_or_else(|| {
+                    format!("Struct '{}' fields not found in context", struct_name)
+                })?.clone();
+
+                let orig_name = if let Some(meta) = ctx.all_structs.iter().find(|s| {
+                    mangle_name(&s.module_name, s.original_name, false) == struct_name
+                }) {
+                    meta.original_name
+                } else {
+                    &struct_name
+                };
+
+                let info_struct_name = format!("StructInfo__{}", struct_name);
+                let info_struct_name_ref = Box::leak(info_struct_name.into_boxed_str());
+
+                if !ctx.structs.contains_key(info_struct_name_ref) {
+                    let mut info_fields = Vec::new();
+                    info_fields.push((
+                        "struct_name".to_string(),
+                        Type::Ref {
+                            is_mut: false,
+                            ty: Box::new(Type::Str),
+                        },
+                    ));
+                    for (f_name, _f_ty) in &fields {
+                        info_fields.push((f_name.clone(), Type::TypeVal));
+                    }
+                    ctx.structs.insert(info_struct_name_ref.to_string(), info_fields.clone());
+
+                    ctx.all_structs.push(StructMeta {
+                        original_name: info_struct_name_ref,
+                        module_name: "extern".to_string(),
+                        is_pub: true,
+                        fields: info_fields.clone(),
+                    });
+
+                    let sema_fields = info_fields
+                        .into_iter()
+                        .map(|(n, ty)| {
+                            let n_ref = Box::leak(n.into_boxed_str());
+                            Param {
+                                name: n_ref,
+                                ty,
+                                contract: None,
+                            }
+                        })
+                        .collect();
+                    ctx.monomorphized_structs.push(StructDef {
+                        name: info_struct_name_ref,
+                        fields: sema_fields,
+                    });
+                }
+
+                let mut init_fields = Vec::new();
+                init_fields.push(FieldInit {
+                    name: "struct_name",
+                    value: TypedExpr {
+                        kind: ExprKind::Str(orig_name.to_string()),
+                        ty: Type::Ref {
+                            is_mut: false,
+                            ty: Box::new(Type::Str),
+                        },
+                    },
+                });
+                for (f_name, f_ty) in &fields {
+                    let ty_id = get_type_id(f_ty);
+                    let f_name_ref = Box::leak(f_name.clone().into_boxed_str());
+                    init_fields.push(FieldInit {
+                        name: f_name_ref,
+                        value: TypedExpr {
+                            kind: ExprKind::Int(ty_id),
+                            ty: Type::TypeVal,
+                        },
+                    });
+                }
+
+                Ok(TypedExpr {
+                    kind: ExprKind::StructLiteral {
+                        name: info_struct_name_ref,
+                        fields: init_fields,
+                    },
+                    ty: Type::Struct(info_struct_name_ref.to_string()),
                 })
             }
             other => Err(format!("Unknown builtin function @{}", other)),
