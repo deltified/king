@@ -257,7 +257,43 @@ fn compile_statement<'a>(ctx: &mut MirBuilderContext<'a>, stmt: crate::sema::Sta
             let var_id = ctx.declare_var(name, value.ty);
             ctx.push_statement(Statement::Assign(var_id, Rvalue::Use(val_op)));
         }
-        crate::sema::Statement::HandleLet { name, value, ok_body, err_body, .. } => {
+        crate::sema::Statement::AssertLet { name, value, .. } => {
+            let val_op = compile_expr(ctx, value.clone());
+            let struct_name = match &value.ty {
+                Type::Struct(s) => s,
+                _ => unreachable!(),
+            };
+            
+            let fields_list = ctx.structs.get(struct_name).cloned().unwrap_or_default();
+            let is_ok_index = fields_list.iter().position(|f| f == "is_ok").unwrap();
+            let ok_index = fields_list.iter().position(|f| f == "ok").unwrap();
+            let ok_ty = ctx.struct_field_tys.get(struct_name).unwrap().get("ok").unwrap().clone();
+            
+            let is_ok_temp = ctx.declare_temp(Type::Bool);
+            ctx.push_statement(Statement::Assign(is_ok_temp, Rvalue::FieldAccess(val_op.clone(), is_ok_index)));
+            
+            let ok_lbl = ctx.new_block();
+            let fail_lbl = ctx.new_block();
+            let next_lbl = ctx.new_block();
+            
+            ctx.terminate(Terminator::CondBranch {
+                cond: Operand::Var(is_ok_temp),
+                then_block: ok_lbl,
+                else_block: fail_lbl,
+            });
+            
+            ctx.start_block(fail_lbl);
+            ctx.push_statement(Statement::Call("exit", vec![Operand::Int(101)]));
+            ctx.terminate(Terminator::Unreachable);
+            
+            ctx.start_block(ok_lbl);
+            let var_id = ctx.declare_var(name, ok_ty);
+            ctx.push_statement(Statement::Assign(var_id, Rvalue::FieldAccess(val_op.clone(), ok_index)));
+            ctx.terminate(Terminator::Goto(next_lbl));
+            
+            ctx.start_block(next_lbl);
+        }
+        crate::sema::Statement::HandleLet { name, value, ok_body, err_body, is_ok_escape } => {
             let val_op = compile_expr(ctx, value.clone());
             let struct_name = match &value.ty {
                 Type::Struct(s) => s,
