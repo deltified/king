@@ -117,6 +117,13 @@ pub mod ast {
             is_mut: bool,
             value: Expr<'a>,
         },
+        HandleLet {
+            name: &'a str,
+            is_mut: bool,
+            value: Expr<'a>,
+            ok_body: Block<'a>,
+            err_body: Block<'a>,
+        },
         Assign {
             name: &'a str,
             is_deref: bool,
@@ -353,6 +360,13 @@ fn build_statement<'a>(stmt: crate::parser::Statement<'a>) -> Statement<'a> {
             name,
             is_mut,
             value: build_expr(value),
+        },
+        crate::parser::Statement::HandleLet { name, is_mut, value, ok_body, err_body } => Statement::HandleLet {
+            name,
+            is_mut,
+            value: build_expr(value),
+            ok_body: build_block(ok_body),
+            err_body: build_block(err_body),
         },
         crate::parser::Statement::Assign { name, is_deref, value } => Statement::Assign {
             name,
