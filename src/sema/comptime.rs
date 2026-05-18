@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use super::ast::Type;
-use super::context::SemaContext;
+use super::context::{SemaContext, mangle_name, OptionExt};
+use super::analyze::get_type_id;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeVal {
@@ -9,6 +10,7 @@ pub enum ComptimeVal {
     Bool(bool),
     Str(String),
     Type(Type),
+    Struct(String, HashMap<String, ComptimeVal>),
     Void,
 }
 
@@ -76,6 +78,7 @@ pub fn eval_comptime_expr(
                 ComptimeVal::Bool(_) => Type::Bool,
                 ComptimeVal::Str(_) => Type::Str,
                 ComptimeVal::Type(_) => Type::TypeVal,
+                ComptimeVal::Struct(name, _) => Type::Struct(name),
                 _ => Type::Void,
             };
             let dest_ty = ctx.resolve_type(Type::from(ty.clone()))?;
@@ -93,12 +96,80 @@ pub fn eval_comptime_expr(
                     ComptimeVal::Bool(_) => Type::Bool,
                     ComptimeVal::Str(_) => Type::Str,
                     ComptimeVal::Type(_) => Type::TypeVal,
+                    ComptimeVal::Struct(name, _) => Type::Struct(name),
                     _ => Type::Void,
                 };
                 Ok(ComptimeVal::Type(ty_val))
             }
+            "structinfo" => {
+                if args.len() != 1 {
+                    return Err(format!("@structinfo expects 1 argument, found {}", args.len()));
+                }
+                let struct_name = match &args[0] {
+                    crate::hir::Expr::Ident(name) => {
+                        if let Ok(Type::Struct(mangled)) = ctx.resolve_struct_type(name) {
+                            mangled
+                        } else {
+                            let val = eval_comptime_expr(&args[0], env, ctx)?;
+                            match val {
+                                ComptimeVal::Type(Type::Struct(mangled)) => mangled,
+                                ComptimeVal::Struct(mangled, _) => mangled,
+                                _ => return Err(format!("@structinfo expects a struct type or expression")),
+                            }
+                        }
+                    }
+                    other => {
+                        let val = eval_comptime_expr(other, env, ctx)?;
+                        match val {
+                            ComptimeVal::Type(Type::Struct(mangled)) => mangled,
+                            ComptimeVal::Struct(mangled, _) => mangled,
+                            _ => return Err(format!("@structinfo expects a struct type or expression")),
+                        }
+                    }
+                };
+
+                let fields = ctx.structs.get(&struct_name).ok_ok_or_else(|| {
+                    format!("Struct '{}' fields not found in context", struct_name)
+                })?.clone();
+
+                let orig_name = if let Some(meta) = ctx.all_structs.iter().find(|s| {
+                    mangle_name(&s.module_name, s.original_name, false) == struct_name
+                }) {
+                    meta.original_name
+                } else {
+                    &struct_name
+                };
+
+                let mut info_fields = HashMap::new();
+                info_fields.insert("struct_name".to_string(), ComptimeVal::Str(orig_name.to_string()));
+                for (f_name, f_ty) in fields {
+                    info_fields.insert(f_name, ComptimeVal::Type(f_ty));
+                }
+
+                Ok(ComptimeVal::Struct(format!("StructInfo__{}", struct_name), info_fields))
+            }
             other => Err(format!("Unknown compile-time builtin @{}", other)),
-        },
+        }
+        crate::hir::Expr::FieldAccess { expr, field } => {
+            let base_val = eval_comptime_expr(expr, env, ctx)?;
+            if let ComptimeVal::Struct(_, fields) = base_val {
+                if let Some(val) = fields.get(*field) {
+                    Ok(val.clone())
+                } else {
+                    Err(format!("Field '{}' not found on struct", field))
+                }
+            } else {
+                Err(format!("Cannot access field '{}' on non-struct comptime value", field))
+            }
+        }
+        crate::hir::Expr::StructLiteral { name, fields } => {
+            let mut eval_fields = HashMap::new();
+            for f in fields {
+                let val = eval_comptime_expr(&f.value, env, ctx)?;
+                eval_fields.insert(f.name.to_string(), val);
+            }
+            Ok(ComptimeVal::Struct(name.to_string(), eval_fields))
+        }
         crate::hir::Expr::Call {
             name,
             type_args: _,
