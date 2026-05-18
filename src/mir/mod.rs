@@ -32,6 +32,7 @@ pub mod ast {
         FieldAccess(Operand<'a>, usize),
         RefField(bool, VarId, usize),
         RefFieldVar(bool, &'a str, usize),
+        New(Box<Rvalue<'a>>),
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -222,13 +223,15 @@ pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
             ctx.terminate(Terminator::Return(None));
         }
 
-        functions.push(Function {
+        let mut func = Function {
             name: f.name,
             params,
             ret_type: f.ret_type,
             basic_blocks: ctx.basic_blocks,
             vars: ctx.vars,
-        });
+        };
+        insert_automatic_frees(&mut func);
+        functions.push(func);
     }
 
     let mut extern_functions = Vec::new();
@@ -603,6 +606,49 @@ fn compile_expr<'a>(ctx: &mut MirBuilderContext<'a>, expr: crate::sema::ast::Typ
             let temp_var = ctx.declare_temp(expr.ty.clone());
             ctx.push_statement(Statement::Assign(temp_var, Rvalue::FieldAccess(sub_op, field_index)));
             Operand::Var(temp_var)
+        }
+        crate::sema::ast::ExprKind::New(sub_expr) => {
+            if let crate::sema::ast::ExprKind::StructLiteral { name, fields } = &sub_expr.kind {
+                let fields_list = ctx.structs.get(*name).cloned().unwrap_or_default();
+                let mut ops = Vec::new();
+                for field_name in &fields_list {
+                    let init = fields.iter().find(|f| f.name == field_name).unwrap();
+                    ops.push(compile_expr(ctx, init.value.clone()));
+                }
+                let temp_var = ctx.declare_temp(expr.ty.clone());
+                ctx.push_statement(Statement::Assign(temp_var, Rvalue::New(Box::new(Rvalue::StructLiteral(ops)))));
+                Operand::Var(temp_var)
+            } else {
+                panic!("'new' keyword is only supported on struct literals");
+            }
+        }
+    }
+}
+
+fn insert_automatic_frees<'a>(func: &mut Function<'a>) {
+    use std::collections::HashSet;
+    let mut heap_allocated_vars = HashSet::new();
+    for bb in &func.basic_blocks {
+        for stmt in &bb.statements {
+            if let Statement::Assign(var_id, Rvalue::New(_)) = stmt {
+                heap_allocated_vars.insert(*var_id);
+            }
+        }
+    }
+
+    if heap_allocated_vars.is_empty() {
+        return;
+    }
+
+    for bb in &mut func.basic_blocks {
+        if let Terminator::Return(ref opt_op) = bb.terminator {
+            let mut vars_to_free = heap_allocated_vars.clone();
+            if let Some(Operand::Var(ret_var)) = opt_op {
+                vars_to_free.remove(ret_var);
+            }
+            for var_id in vars_to_free {
+                bb.statements.push(Statement::Call("free", vec![Operand::Var(var_id)]));
+            }
         }
     }
 }
