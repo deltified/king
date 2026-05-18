@@ -103,6 +103,7 @@ struct MirBuilderContext<'a> {
     next_block_id: usize,
     loop_stack: Vec<(BasicBlockId, BasicBlockId)>, // (continue_target, break_target)
     structs: HashMap<String, Vec<String>>,
+    struct_field_tys: HashMap<String, HashMap<String, Type>>,
 }
 
 impl<'a> MirBuilderContext<'a> {
@@ -115,6 +116,7 @@ impl<'a> MirBuilderContext<'a> {
             next_block_id: 0,
             loop_stack: Vec::new(),
             structs: HashMap::new(),
+            struct_field_tys: HashMap::new(),
         }
     }
 
@@ -168,14 +170,22 @@ pub fn build<'a>(program: crate::sema::Program<'a>) -> Program<'a> {
     let mut functions = Vec::new();
     
     let mut structs_map = HashMap::new();
+    let mut struct_field_tys = HashMap::new();
     for s in &program.structs {
         let field_names: Vec<String> = s.fields.iter().map(|p| p.name.to_string()).collect();
         structs_map.insert(s.name.to_string(), field_names);
+        
+        let mut fields_map = HashMap::new();
+        for f in &s.fields {
+            fields_map.insert(f.name.to_string(), f.ty.clone());
+        }
+        struct_field_tys.insert(s.name.to_string(), fields_map);
     }
 
     for f in program.functions {
         let mut ctx = MirBuilderContext::new();
         ctx.structs = structs_map.clone();
+        ctx.struct_field_tys = struct_field_tys.clone();
         
         let entry = ctx.new_block();
         ctx.start_block(entry);
@@ -246,6 +256,47 @@ fn compile_statement<'a>(ctx: &mut MirBuilderContext<'a>, stmt: crate::sema::Sta
             let val_op = compile_expr(ctx, value.clone());
             let var_id = ctx.declare_var(name, value.ty);
             ctx.push_statement(Statement::Assign(var_id, Rvalue::Use(val_op)));
+        }
+        crate::sema::Statement::HandleLet { name, value, ok_body, err_body, .. } => {
+            let val_op = compile_expr(ctx, value.clone());
+            let struct_name = match &value.ty {
+                Type::Struct(s) => s,
+                _ => unreachable!(),
+            };
+            
+            let fields_list = ctx.structs.get(struct_name).cloned().unwrap_or_default();
+            let is_ok_index = fields_list.iter().position(|f| f == "is_ok").unwrap();
+            let ok_index = fields_list.iter().position(|f| f == "ok").unwrap();
+            let ok_ty = ctx.struct_field_tys.get(struct_name).unwrap().get("ok").unwrap().clone();
+            
+            let is_ok_temp = ctx.declare_temp(Type::Bool);
+            ctx.push_statement(Statement::Assign(is_ok_temp, Rvalue::FieldAccess(val_op.clone(), is_ok_index)));
+            
+            let ok_lbl = ctx.new_block();
+            let err_lbl = ctx.new_block();
+            let merge_lbl = ctx.new_block();
+            
+            ctx.terminate(Terminator::CondBranch {
+                cond: Operand::Var(is_ok_temp),
+                then_block: ok_lbl,
+                else_block: err_lbl,
+            });
+            
+            ctx.start_block(ok_lbl);
+            let var_id = ctx.declare_var(name, ok_ty);
+            ctx.push_statement(Statement::Assign(var_id, Rvalue::FieldAccess(val_op.clone(), ok_index)));
+            compile_block(ctx, ok_body);
+            if ctx.current_block.is_some() {
+                ctx.terminate(Terminator::Goto(merge_lbl));
+            }
+            
+            ctx.start_block(err_lbl);
+            compile_block(ctx, err_body);
+            if ctx.current_block.is_some() {
+                ctx.terminate(Terminator::Goto(merge_lbl));
+            }
+            
+            ctx.start_block(merge_lbl);
         }
         crate::sema::Statement::Assign { name, is_deref, value } => {
             let val_op = compile_expr(ctx, value);
