@@ -39,6 +39,19 @@ impl<'ctx> Codegen<'ctx> {
             self.module.add_function("exit", exit_fn_type, None);
         }
 
+        if self.module.get_function("malloc").is_none() {
+            let malloc_param_types = vec![self.context.i64_type().into()];
+            let malloc_ret_type = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+            let malloc_fn_type = malloc_ret_type.fn_type(&malloc_param_types, false);
+            self.module.add_function("malloc", malloc_fn_type, None);
+        }
+
+        if self.module.get_function("free").is_none() {
+            let free_param_types = vec![self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()];
+            let free_fn_type = self.context.void_type().fn_type(&free_param_types, false);
+            self.module.add_function("free", free_fn_type, None);
+        }
+
         // Pre-create all struct types as opaque struct types first
         for s in &program.structs {
             let struct_ty = self.context.opaque_struct_type(s.name);
@@ -529,6 +542,34 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let field_ptr = self.builder.build_struct_gep(struct_ty, struct_ptr, *field_index as u32, "field_ptr").unwrap();
                 field_ptr.as_basic_value_enum()
+            }
+            mir::Rvalue::New(sub_rvalue) => {
+                let struct_name = match &dest_ty {
+                    Type::Ref { ty: inner, .. } => match &**inner {
+                        Type::Struct(name) => name.clone(),
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                };
+                let struct_ty = self.get_llvm_type(Type::Struct(struct_name)).into_struct_type();
+                let size_val = struct_ty.size_of().unwrap();
+                let malloc_fn = self.module.get_function("malloc")
+                    .unwrap_or_else(|| panic!("malloc function not found"));
+                let call_val = self.builder.build_call(malloc_fn, &[size_val.into()], "malloc_call").unwrap();
+                let raw_ptr = match call_val.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(val) => val.into_pointer_value(),
+                    _ => panic!("malloc should return a value"),
+                };
+                if let mir::Rvalue::StructLiteral(ops) = &**sub_rvalue {
+                    for (i, op) in ops.iter().enumerate() {
+                        let field_ptr = self.builder.build_struct_gep(struct_ty, raw_ptr, i as u32, &format!("field_{}", i)).unwrap();
+                        let val = self.compile_operand(op, var_ptrs, param_ptrs, vars, params);
+                        self.builder.build_store(field_ptr, val).unwrap();
+                    }
+                } else {
+                    unreachable!();
+                }
+                raw_ptr.as_basic_value_enum()
             }
         }
     }
